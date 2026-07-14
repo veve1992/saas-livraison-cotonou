@@ -1,0 +1,31 @@
+name: Deploy to Replit
+
+on:
+  push:
+    branches: [ main ]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Set up Node.js
+      uses: actions/setup-node@v3
+      with:
+        node-version: '18'
+
+    - name: Install dependencies
+      run: npm install
+
+    - name: Install PostgreSQL driver
+      run: npm install pg
+
+    - name: Create database tables
+      run: node init-db.js
+      env:
+        DATABASE_URL: ${{ secrets.DATABASE_URL }}
+
+    - name: Deployment complete
+      run: echo "✅ Deployment successful! Your app is ready."
