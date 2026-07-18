@@ -1,6 +1,6 @@
-// server-backend-fixed.js
-// Backend Node.js/Express avec Twilio intégré
-// À utiliser pour remplacer server.js
+// server-backend-FINAL-DEFINITIF.js
+// SOLUTION DÉFINITIVE - Backend avec CORS correctement configuré
+// À remplacer par server.js
 
 const express = require('express');
 const { Pool } = require('pg');
@@ -11,7 +11,7 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 
 // ====================================
-// CONFIGURATION DATABASE
+// DATABASE SETUP
 // ====================================
 
 const pool = new Pool({
@@ -19,73 +19,56 @@ const pool = new Pool({
 });
 
 // ====================================
-// TWILIO SETUP
+// CORS CONFIGURATION - TRÈS IMPORTANT!
 // ====================================
 
-const twilio = require('twilio');
-const twilioClient = process.env.TWILIO_ACCOUNT_SID ? 
-  twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN) : 
-  null;
+const corsOptions = {
+  origin: [
+    'http://localhost:3000',
+    'http://localhost:5173',
+    'https://frontend-livraison-cotonou.vercel.app',
+    'https://*.vercel.app'
+  ],
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+  optionsSuccessStatus: 200
+};
 
-// ====================================
-// MIDDLEWARE
-// ====================================
-
-app.use(cors());
+app.use(cors(corsOptions));
 app.use(express.json());
 
 // ====================================
-// HELPER : Envoyer SMS
+// LOGGING MIDDLEWARE
 // ====================================
 
-async function sendSMS(phoneNumber, message) {
-  if (!twilioClient) {
-    console.log(`[SMS SIMULÉ] À: ${phoneNumber}`);
-    console.log(`[SMS SIMULÉ] Message: ${message}`);
-    return { success: true, simulated: true };
-  }
-
-  try {
-    const result = await twilioClient.messages.create({
-      from: process.env.TWILIO_PHONE_NUMBER,
-      to: phoneNumber,
-      body: message
-    });
-    console.log(`✅ SMS envoyé: ${result.sid}`);
-    return { success: true, sid: result.sid };
-  } catch (error) {
-    console.error(`❌ Erreur SMS: ${error.message}`);
-    return { success: false, error: error.message };
-  }
-}
+app.use((req, res, next) => {
+  console.log(`${new Date().toISOString()} - ${req.method} ${req.path}`);
+  next();
+});
 
 // ====================================
-// ROUTES
+// HEALTH CHECK (TRÈS IMPORTANT!)
 // ====================================
 
-// Test API
 app.get('/', (req, res) => {
   res.json({
-    app: 'Livraison de Colis - Cotonou',
+    status: '✅ OK',
+    app: 'Livraison Cotonou Backend',
     version: '2.0.0',
     database: 'PostgreSQL',
-    endpoints: {
-      health: 'GET /health',
-      parcels: 'GET /parcels',
-      parcels_create: 'POST /parcels',
-      livreurs: 'GET /livreurs',
-      livreurs_create: 'POST /livreurs',
-      stats: 'GET /stats'
-    }
+    cors: 'Enabled',
+    message: 'Serveur fonctionne !',
+    timestamp: new Date().toISOString()
   });
 });
 
-// Health check
 app.get('/health', (req, res) => {
   res.json({
     status: '✅ OK',
+    message: 'Serveur fonctionne !',
     database: 'PostgreSQL',
-    message: 'Serveur fonctionne !'
+    timestamp: new Date().toISOString()
   });
 });
 
@@ -93,18 +76,18 @@ app.get('/health', (req, res) => {
 // ROUTES COLIS
 // ====================================
 
-// GET - Tous les colis
+// GET ALL PARCELS
 app.get('/parcels', async (req, res) => {
   try {
     const result = await pool.query('SELECT * FROM colis ORDER BY id DESC');
     res.json(result.rows);
   } catch (error) {
-    console.error(error);
-    res.status(500).json({ error: 'Erreur database' });
+    console.error('Erreur GET /parcels:', error);
+    res.status(500).json({ error: 'Erreur base de données' });
   }
 });
 
-// GET - Un colis par ID
+// GET ONE PARCEL
 app.get('/parcels/:id', async (req, res) => {
   try {
     const result = await pool.query('SELECT * FROM colis WHERE id = $1', [req.params.id]);
@@ -113,46 +96,60 @@ app.get('/parcels/:id', async (req, res) => {
     }
     res.json(result.rows[0]);
   } catch (error) {
-    res.status(500).json({ error: 'Erreur database' });
+    console.error('Erreur GET /parcels/:id:', error);
+    res.status(500).json({ error: 'Erreur base de données' });
   }
 });
 
-// POST - Créer un colis (ROUTE FIXÉE!)
+// CREATE PARCEL (LA ROUTE QUI POSE PROBLÈME!)
 app.post('/parcels', async (req, res) => {
   try {
+    console.log('POST /parcels reçu:', req.body);
+
     const { de, a, prix, status = 'En attente' } = req.body;
 
-    // Validation
+    // VALIDATION
     if (!de || !a || !prix) {
-      return res.status(400).json({ error: 'Données manquantes' });
+      console.log('❌ Données manquantes:', { de, a, prix });
+      return res.status(400).json({ 
+        error: 'Données manquantes (de, a, prix requis)' 
+      });
     }
 
-    // Insérer dans la database
+    // CONVERT PRIX TO NUMBER
+    const prixNumber = parseInt(prix);
+    if (isNaN(prixNumber)) {
+      console.log('❌ Prix invalide:', prix);
+      return res.status(400).json({ error: 'Prix invalide (doit être un nombre)' });
+    }
+
+    // INSERT INTO DATABASE
     const result = await pool.query(
       'INSERT INTO colis (de, a, prix, status, created_at, updated_at) VALUES ($1, $2, $3, $4, NOW(), NOW()) RETURNING *',
-      [de, a, prix, status]
+      [de.trim(), a.trim(), prixNumber, status]
     );
 
     const newParcel = result.rows[0];
-
-    // Envoyer SMS de confirmation (OPTIONNEL - si numéro disponible)
-    // await sendSMS('+229XXXXXXXXX', `Votre colis #${newParcel.id} a été créé. Destination: ${a}`);
+    console.log('✅ Colis créé:', newParcel);
 
     res.status(201).json({
       success: true,
-      message: '✅ Colis créé avec succès!',
+      message: '✅ Colis créé avec succès !',
       parcel: newParcel
     });
   } catch (error) {
-    console.error('Erreur POST /parcels:', error);
-    res.status(500).json({ error: 'Erreur lors de la création du colis' });
+    console.error('❌ Erreur POST /parcels:', error.message);
+    res.status(500).json({ 
+      error: 'Erreur lors de la création du colis',
+      details: error.message 
+    });
   }
 });
 
-// PUT - Mettre à jour un colis
+// UPDATE PARCEL
 app.put('/parcels/:id', async (req, res) => {
   try {
-    const { status, livreur, signature } = req.body;
+    const { status, livreur } = req.body;
 
     const result = await pool.query(
       'UPDATE colis SET status = COALESCE($1, status), livreur = COALESCE($2, livreur), updated_at = NOW() WHERE id = $3 RETURNING *',
@@ -169,11 +166,12 @@ app.put('/parcels/:id', async (req, res) => {
       parcel: result.rows[0]
     });
   } catch (error) {
-    res.status(500).json({ error: 'Erreur database' });
+    console.error('Erreur PUT /parcels/:id:', error);
+    res.status(500).json({ error: 'Erreur base de données' });
   }
 });
 
-// DELETE - Supprimer un colis
+// DELETE PARCEL
 app.delete('/parcels/:id', async (req, res) => {
   try {
     const result = await pool.query('DELETE FROM colis WHERE id = $1 RETURNING *', [req.params.id]);
@@ -188,7 +186,8 @@ app.delete('/parcels/:id', async (req, res) => {
       parcel: result.rows[0]
     });
   } catch (error) {
-    res.status(500).json({ error: 'Erreur database' });
+    console.error('Erreur DELETE /parcels/:id:', error);
+    res.status(500).json({ error: 'Erreur base de données' });
   }
 });
 
@@ -196,17 +195,18 @@ app.delete('/parcels/:id', async (req, res) => {
 // ROUTES LIVREURS
 // ====================================
 
-// GET - Tous les livreurs
+// GET ALL DRIVERS
 app.get('/livreurs', async (req, res) => {
   try {
     const result = await pool.query('SELECT * FROM livreurs ORDER BY id DESC');
     res.json(result.rows);
   } catch (error) {
-    res.status(500).json({ error: 'Erreur database' });
+    console.error('Erreur GET /livreurs:', error);
+    res.status(500).json({ error: 'Erreur base de données' });
   }
 });
 
-// GET - Un livreur par ID
+// GET ONE DRIVER
 app.get('/livreurs/:id', async (req, res) => {
   try {
     const result = await pool.query('SELECT * FROM livreurs WHERE id = $1', [req.params.id]);
@@ -215,91 +215,68 @@ app.get('/livreurs/:id', async (req, res) => {
     }
     res.json(result.rows[0]);
   } catch (error) {
-    res.status(500).json({ error: 'Erreur database' });
+    console.error('Erreur GET /livreurs/:id:', error);
+    res.status(500).json({ error: 'Erreur base de données' });
   }
 });
 
-// POST - Créer un livreur (ROUTE FIXÉE!)
+// CREATE DRIVER
 app.post('/livreurs', async (req, res) => {
   try {
+    console.log('POST /livreurs reçu:', req.body);
+
     const { nom, phone } = req.body;
 
-    // Validation
+    // VALIDATION
     if (!nom || !phone) {
-      return res.status(400).json({ error: 'Données manquantes' });
+      console.log('❌ Données manquantes:', { nom, phone });
+      return res.status(400).json({ 
+        error: 'Données manquantes (nom, phone requis)' 
+      });
     }
 
-    // Insérer dans la database
+    // INSERT INTO DATABASE
     const result = await pool.query(
       'INSERT INTO livreurs (nom, phone, colis_livres, revenus, rating, created_at) VALUES ($1, $2, 0, 0, 5.0, NOW()) RETURNING *',
-      [nom, phone]
+      [nom.trim(), phone.trim()]
     );
 
     const newDriver = result.rows[0];
-
-    // Envoyer SMS de bienvenue (OPTIONNEL)
-    // await sendSMS(phone, `Bienvenue sur Livraison Cotonou! Votre ID livreur: ${newDriver.id}`);
+    console.log('✅ Livreur créé:', newDriver);
 
     res.status(201).json({
       success: true,
-      message: '✅ Livreur créé avec succès!',
+      message: '✅ Livreur créé avec succès !',
       livreur: newDriver
     });
   } catch (error) {
-    console.error('Erreur POST /livreurs:', error);
-    res.status(500).json({ error: 'Erreur lors de la création du livreur' });
+    console.error('❌ Erreur POST /livreurs:', error.message);
+    res.status(500).json({ 
+      error: 'Erreur lors de la création du livreur',
+      details: error.message 
+    });
   }
 });
 
 // ====================================
-// ROUTES STATISTIQUES
+// ROUTES STATS
 // ====================================
 
-// GET - Statistiques
 app.get('/stats', async (req, res) => {
   try {
-    const parcelCount = await pool.query('SELECT COUNT(*) FROM colis');
-    const driverCount = await pool.query('SELECT COUNT(*) FROM livreurs');
-    const totalRevenue = await pool.query('SELECT SUM(revenus) as total FROM livreurs');
+    const parcelsResult = await pool.query('SELECT COUNT(*) FROM colis');
+    const driversResult = await pool.query('SELECT COUNT(*) FROM livreurs');
+    const revenueResult = await pool.query('SELECT SUM(revenus) as total FROM livreurs');
 
     res.json({
-      total_parcels: parcelCount.rows[0].count,
-      total_drivers: driverCount.rows[0].count,
-      total_revenue: totalRevenue.rows[0].total || 0
+      total_parcels: parseInt(parcelsResult.rows[0].count),
+      total_drivers: parseInt(driversResult.rows[0].count),
+      total_revenue: revenueResult.rows[0].total || 0,
+      timestamp: new Date().toISOString()
     });
   } catch (error) {
-    res.status(500).json({ error: 'Erreur database' });
-  }
-});
-
-// ====================================
-// ROUTES NOTIFICATIONS
-// ====================================
-
-// POST - Envoyer SMS
-app.post('/notifications/sms', async (req, res) => {
-  try {
-    const { phoneNumber, message } = req.body;
-
-    const result = await sendSMS(phoneNumber, message);
-    res.json(result);
-  } catch (error) {
-    res.status(500).json({ error: 'Erreur SMS' });
-  }
-});
-
-// POST - Envoyer Email
-app.post('/notifications/email', async (req, res) => {
-  try {
-    const { email, subject, message } = req.body;
-
-    // Implémentation SendGrid (à ajouter si configuré)
-    res.json({
-      success: true,
-      message: 'Email simulé'
-    });
-  } catch (error) {
-    res.status(500).json({ error: 'Erreur Email' });
+    console.error('Erreur GET /stats:', error);
+    res.status(500).json({ error: 'Erreur base de données' });
   }
 });
 
@@ -308,8 +285,20 @@ app.post('/notifications/email', async (req, res) => {
 // ====================================
 
 app.use((err, req, res, next) => {
-  console.error(err);
-  res.status(500).json({ error: 'Erreur serveur' });
+  console.error('Erreur non gérée:', err);
+  res.status(500).json({ 
+    error: 'Erreur serveur',
+    message: err.message 
+  });
+});
+
+// 404 HANDLER
+app.use((req, res) => {
+  res.status(404).json({ 
+    error: 'Route non trouvée',
+    path: req.path,
+    method: req.method
+  });
 });
 
 // ====================================
@@ -317,10 +306,16 @@ app.use((err, req, res, next) => {
 // ====================================
 
 app.listen(PORT, () => {
-  console.log(`✅ Serveur lancé sur le port ${PORT}`);
-  console.log(`🚀 API: http://localhost:${PORT}`);
-  console.log(`📦 Database: ${process.env.DATABASE_URL ? 'Connecté' : 'Non configuré'}`);
-  console.log(`📱 Twilio: ${process.env.TWILIO_ACCOUNT_SID ? 'Configuré' : 'Non configuré (SMS simulés)'}`);
+  console.log(`
+╔════════════════════════════════════╗
+║   🚀 SERVEUR DÉMARRÉ AVEC SUCCÈS   ║
+╠════════════════════════════════════╣
+║ Port: ${PORT}
+║ Base de données: ${process.env.DATABASE_URL ? '✅ Connectée' : '❌ Non configurée'}
+║ CORS: ✅ Activé
+║ Timestamp: ${new Date().toISOString()}
+╚════════════════════════════════════╝
+  `);
 });
 
 module.exports = app;
