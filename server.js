@@ -305,17 +305,13 @@ app.use((req, res) => {
 // START SERVER
 // ====================================
 
-app.listen(PORT, () => {
-  console.log(`
-╔════════════════════════════════════╗
-║   🚀 SERVEUR DÉMARRÉ AVEC SUCCÈS   ║
-╠════════════════════════════════════╣
-║ Port: ${PORT}
-║ Base de données: ${process.env.DATABASE_URL ? '✅ Connectée' : '❌ Non configurée'}
-║ CORS: ✅ Activé
-║ Timestamp: ${new Date().toISOString()}
-╚════════════════════════════════════╝
-  `);
-});
+// Export pour Vercel
+module.exports = app;
 
+// Ou si utilisé localement:
+if (require.main === module) {
+  app.listen(PORT, () => {
+    console.log(`Server running on ${PORT}`);
+  });
+}
 module.exports = app;
