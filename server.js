@@ -314,4 +314,3 @@ if (require.main === module) {
     console.log(`Server running on ${PORT}`);
   });
 }
-module.exports = app;
