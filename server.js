@@ -1,3 +1,4 @@
+const trackingRoutes = require('./tracking-routes');
 const express = require('express');
 const { Pool } = require('pg');
 const cors = require('cors');
@@ -126,6 +127,7 @@ app.post('/livreurs', async (req, res) => {
 module.exports = app;
 // Écouter sur un port
 const PORT = process.env.PORT || 3000;
+app.use('/', trackingRoutes);
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
