@@ -65,7 +65,7 @@ router.post('/parcels/:id/pickup', async (req, res) => {
       `UPDATE colis 
        SET status = $1, livreur = $2, date_levee = NOW()
        WHERE id = $3`,
-      ['Pris', livreur_id, colis_id]
+      ['En route', livreur_id, colis_id]
     );
 
     // Récupérer info livreur
