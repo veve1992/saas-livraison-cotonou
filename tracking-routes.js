@@ -100,20 +100,19 @@ Livraison estimée dans 1-2h.`;
 
 router.post('/tracking', async (req, res) => {
   try {
-    const { colis_id, livreur_id, latitude, longitude, adresse } = req.body;
+    const { colis_id, latitude, longitude, adresse } = req.body;
 
     // Valider les données
-    if (!latitude || !longitude) {
-      return res.status(400).json({ error: 'Latitude/Longitude manquantes' });
+    if (!colis_id || !latitude || !longitude) {
+      return res.status(400).json({ error: 'Données manquantes' });
     }
 
     // Enregistrer la position
     await pool.query(
-      `INSERT INTO tracking (colis_id, livreur_id, latitude, longitude, adresse, status, created_at)
-       VALUES ($1, $2, $3, $4, $5, 'En route', NOW())`,
-      [colis_id, livreur_id, latitude, longitude, adresse]
+      `INSERT INTO tracking (colis_id, latitude, longitude, adresse, status, created_at)
+       VALUES ($1, $2, $3, $4, 'En route', NOW())`,
+      [colis_id, latitude, longitude, adresse]
     );
-
     res.json({
       success: true,
       message: 'Position enregistrée'
