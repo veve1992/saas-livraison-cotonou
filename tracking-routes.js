@@ -88,6 +88,40 @@ Livraison estimée dans 1-2h.`;
       message: 'Colis pris et SMS envoyé au client',
       colis_id
     });
+// SIGN LIVRAISON
+router.post('/parcels/:id/sign', async (req, res) => {
+  try {
+    const colis_id = req.params.id;
+    const { nom, signature, statut } = req.body;
+
+    // Enregistrer la signature
+    const signResult = await pool.query(
+      `INSERT INTO signatures (colis_id, nom, signature_data, created_at)
+       VALUES ($1, $2, $3, NOW())
+       RETURNING id`,
+      [colis_id, nom, signature]
+    );
+
+    const signature_id = signResult.rows[0].id;
+
+    // Mettre à jour le colis
+    await pool.query(
+      `UPDATE colis 
+       SET status = $1, signature_id = $2, date_livraison = NOW(), updated_at = NOW()
+       WHERE id = $3`,
+      [statut || 'Livré', signature_id, colis_id]
+    );
+
+    res.json({
+      success: true,
+      message: '✅ Colis livré et signé !',
+      signature_id: signature_id
+    });
+  } catch (error) {
+    console.error('Erreur signature:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
   } catch (error) {
     console.error('Erreur pickup:', error);
     res.status(500).json({ error: error.message });
