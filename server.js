@@ -76,8 +76,8 @@ app.post('/parcels', async (req, res) => {
     const query = `
       INSERT INTO colis 
       (de, a, prix, nom_receptionnaire, prenom_receptionnaire, contact_receptionnaire, 
-       adresse_livraison, description_colis, photo_colis, status, created_at)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW())
+       adresse_livraison, description_colis, photo_colis, status, created_at, updated_at)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW(), NOW())
       RETURNING *
     `;
 
