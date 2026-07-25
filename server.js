@@ -60,7 +60,51 @@ app.get('/parcels/:id', async (req, res) => {
 // CREATE
 app.post('/parcels', async (req, res) => {
   try {
-    const { de, a, prix } = req.body;
+    const { 
+      de, 
+      a, 
+      prix, 
+      nom_receptionnaire,
+      prenom_receptionnaire,
+      contact_receptionnaire,
+      adresse_livraison,
+      description_colis,
+      photo_colis,
+      status 
+    } = req.body;
+
+    const query = `
+      INSERT INTO colis 
+      (de, a, prix, nom_receptionnaire, prenom_receptionnaire, contact_receptionnaire, 
+       adresse_livraison, description_colis, photo_colis, status, created_at)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW())
+      RETURNING *
+    `;
+
+    const values = [
+      de,
+      a,
+      prix,
+      nom_receptionnaire || '',
+      prenom_receptionnaire || '',
+      contact_receptionnaire || '',
+      adresse_livraison || '',
+      description_colis || '',
+      photo_colis || '',
+      status || 'En attente'
+    ];
+
+    const result = await pool.query(query, values);
+
+    res.json({
+      success: true,
+      colis: result.rows[0]
+    });
+  } catch (error) {
+    console.error('Erreur:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
     
     if (!de || !a || !prix) {
       return res.status(400).json({ error: 'Missing fields' });
