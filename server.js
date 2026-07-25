@@ -106,26 +106,6 @@ app.post('/parcels', async (req, res) => {
   }
 });
     
-    if (!de || !a || !prix) {
-      return res.status(400).json({ error: 'Missing fields' });
-    }
-
-    const result = await pool.query(
-      'INSERT INTO colis (de, a, prix, status, created_at, updated_at) VALUES ($1, $2, $3, $4, NOW(), NOW()) RETURNING *',
-      [de, a, parseInt(prix), 'En attente']
-    );
-
-    res.status(201).json({
-      success: true,
-      message: '✅ Colis créé avec succès !',
-      parcel: result.rows[0]
-    });
-  } catch (e) {
-    console.error(e);
-    res.status(500).json({ error: 'Creation failed' });
-  }
-});
-
 // ============================================
 // LIVREURS ROUTES
 // ============================================
