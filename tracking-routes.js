@@ -93,7 +93,9 @@ router.post('/parcels/:id/sign', async (req, res) => {
   try {
     const colis_id = req.params.id;
     const { nom, signature, statut } = req.body;
-
+if (!nom || !signature) {
+      return res.status(400).json({ error: 'Missing nom or signature' });
+    }
     // Enregistrer la signature
     const signResult = await pool.query(
       `INSERT INTO signatures (colis_id, nom, signature_data, created_at)
