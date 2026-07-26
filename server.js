@@ -105,6 +105,38 @@ app.post('/parcels', async (req, res) => {
     res.status(500).json({ error: error.message });
   }
 });
+// UPDATE PARCEL STATUS
+app.put('/parcels/:id', async (req, res) => {
+  try {
+    const colis_id = req.params.id;
+    const { status } = req.body;
+
+    if (!status) {
+      return res.status(400).json({ error: 'Status manquant' });
+    }
+
+    const result = await pool.query(
+      `UPDATE colis 
+       SET status = $1, updated_at = NOW(), date_livraison = NOW()
+       WHERE id = $2
+       RETURNING *`,
+      [status, colis_id]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Colis non trouvé' });
+    }
+
+    res.json({
+      success: true,
+      message: '✅ Statut mis à jour',
+      colis: result.rows[0]
+    });
+  } catch (error) {
+    console.error('Erreur UPDATE:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
     
 // ============================================
 // LIVREURS ROUTES
