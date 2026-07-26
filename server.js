@@ -41,13 +41,31 @@ app.get('/health', (req, res) => {
 // GET ALL
 app.get('/parcels', async (req, res) => {
   try {
-    const result = await pool.query('SELECT * FROM colis ORDER BY id DESC');
-    res.json(result.rows);
-  } catch (e) {
-    res.status(500).json({ error: 'Database error' });
+    const page = parseInt(req.query.page) || 1;
+    const limit = 50;
+    const offset = (page - 1) * limit;
+
+    // Total colis
+    const countResult = await pool.query('SELECT COUNT(*) FROM colis');
+    const total = parseInt(countResult.rows[0].count);
+
+    // Colis de cette page
+    const result = await pool.query(
+      'SELECT * FROM colis ORDER BY id DESC LIMIT $1 OFFSET $2',
+      [limit, offset]
+    );
+
+    res.json({
+      data: result.rows,
+      page: page,
+      limit: limit,
+      total: total,
+      pages: Math.ceil(total / limit)
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
   }
 });
-
 // GET ONE
 app.get('/parcels/:id', async (req, res) => {
   try {
