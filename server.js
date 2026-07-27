@@ -38,25 +38,20 @@ app.get('/health', (req, res) => {
 // COLIS ROUTES
 // ============================================
 
-// GET ALL
+// GET ALL PARCELS WITH PAGINATION
 app.get('/parcels', async (req, res) => {
   try {
     const page = parseInt(req.query.page) || 1;
     const limit = 50;
     const offset = (page - 1) * limit;
 
-    // Total colis
     const countResult = await pool.query('SELECT COUNT(*) FROM colis');
     const total = parseInt(countResult.rows[0].count);
 
-    // Colis de cette page
     const result = await pool.query(
-  `SELECT c.*, l.nom as livreur_nom, l.phone as livreur_phone 
-   FROM colis c
-   LEFT JOIN livreurs l ON c.livreur = l.id
-   ORDER BY c.id DESC LIMIT $1 OFFSET $2`,
-  [limit, offset]
-);
+      'SELECT * FROM colis ORDER BY id DESC LIMIT $1 OFFSET $2',
+      [limit, offset]
+    );
 
     res.json({
       data: result.rows,
@@ -69,22 +64,16 @@ app.get('/parcels', async (req, res) => {
     res.status(500).json({ error: error.message });
   }
 });
-// GET ONE
+
+// GET ONE PARCEL
 app.get('/parcels/:id', async (req, res) => {
   try {
-    const result = await pool.query(
-      `SELECT c.*, l.nom as livreur_nom, l.phone as livreur_phone 
-       FROM colis c
-       LEFT JOIN livreurs l ON c.livreur = l.id
-       WHERE c.id = $1`,
-      [req.params.id]
-    );
+    const result = await pool.query('SELECT * FROM colis WHERE id = $1', [req.params.id]);
     res.json(result.rows[0] || { error: 'Not found' });
   } catch (e) {
     res.status(500).json({ error: 'Database error' });
   }
 });
-
 // CREATE
 app.post('/parcels', async (req, res) => {
   try {
