@@ -51,9 +51,12 @@ app.get('/parcels', async (req, res) => {
 
     // Colis de cette page
     const result = await pool.query(
-      'SELECT * FROM colis ORDER BY id DESC LIMIT $1 OFFSET $2',
-      [limit, offset]
-    );
+  `SELECT c.*, l.nom as livreur_nom, l.phone as livreur_phone 
+   FROM colis c
+   LEFT JOIN livreurs l ON c.livreur = l.id
+   ORDER BY c.id DESC LIMIT $1 OFFSET $2`,
+  [limit, offset]
+);
 
     res.json({
       data: result.rows,
@@ -69,7 +72,13 @@ app.get('/parcels', async (req, res) => {
 // GET ONE
 app.get('/parcels/:id', async (req, res) => {
   try {
-    const result = await pool.query('SELECT * FROM colis WHERE id = $1', [req.params.id]);
+    const result = await pool.query(
+      `SELECT c.*, l.nom as livreur_nom, l.phone as livreur_phone 
+       FROM colis c
+       LEFT JOIN livreurs l ON c.livreur = l.id
+       WHERE c.id = $1`,
+      [req.params.id]
+    );
     res.json(result.rows[0] || { error: 'Not found' });
   } catch (e) {
     res.status(500).json({ error: 'Database error' });
