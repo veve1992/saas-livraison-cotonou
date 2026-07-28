@@ -226,6 +226,69 @@ app.post('/livreurs', async (req, res) => {
 });
 
 // ============================================
+// AUTHENTICATION ROUTES
+// ============================================
+
+app.post('/auth/register', async (req, res) => {
+  try {
+    const { email, password, nom_entreprise } = req.body;
+
+    if (!email || !password || !nom_entreprise) {
+      return res.status(400).json({ error: 'Tous les champs requis' });
+    }
+
+    // Vérifier si email existe
+    const existing = await pool.query('SELECT id FROM entreprises WHERE email = $1', [email]);
+    if (existing.rows.length > 0) {
+      return res.status(400).json({ error: 'Email déjà utilisé' });
+    }
+
+    // Créer entreprise
+    const result = await pool.query(
+      `INSERT INTO entreprises (email, password, nom_entreprise, created_at)
+       VALUES ($1, $2, $3, NOW()) RETURNING id, email, nom_entreprise`,
+      [email, password, nom_entreprise]
+    );
+
+    res.status(201).json({
+      success: true,
+      message: '✅ Entreprise créée ! Connectez-vous.',
+      entreprise: result.rows[0]
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.post('/auth/login', async (req, res) => {
+  try {
+    const { email, password } = req.body;
+
+    if (!email || !password) {
+      return res.status(400).json({ error: 'Email et mot de passe requis' });
+    }
+
+    const result = await pool.query(
+      'SELECT id, email, nom_entreprise FROM entreprises WHERE email = $1 AND password = $2',
+      [email, password]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(401).json({ error: 'Email ou mot de passe incorrect' });
+    }
+
+    const entreprise = result.rows[0];
+    res.json({
+      success: true,
+      message: '✅ Connecté !',
+      entreprise: entreprise,
+      token: `token_${entreprise.id}_${Date.now()}`
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+// ============================================
 // EXPORT
 // ============================================
 
