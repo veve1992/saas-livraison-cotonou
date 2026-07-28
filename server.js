@@ -45,7 +45,7 @@ app.get('/parcels', async (req, res) => {
     const limit = 50;
     const offset = (page - 1) * limit;
 
-    const countResult = await pool.query('SELECT COUNT(*) FROM colis');
+    const countResult = await pool.query('SELECT COUNT(*) FROM colis WHERE status IS NOT NULL');
     const total = parseInt(countResult.rows[0].count);
 
     const result = await pool.query(
