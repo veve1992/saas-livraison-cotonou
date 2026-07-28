@@ -227,13 +227,11 @@ app.post('/auth/register', async (req, res) => {
       return res.status(400).json({ error: 'Tous les champs requis' });
     }
 
-    // Vérifier si email existe
     const existing = await pool.query('SELECT id FROM entreprises WHERE email = $1', [email]);
     if (existing.rows.length > 0) {
       return res.status(400).json({ error: 'Email déjà utilisé' });
     }
 
-    // Créer entreprise
     const result = await pool.query(
       `INSERT INTO entreprises (email, password, nom_entreprise, created_at)
        VALUES ($1, $2, $3, NOW()) RETURNING id, email, nom_entreprise`,
@@ -278,6 +276,7 @@ app.post('/auth/login', async (req, res) => {
     res.status(500).json({ error: error.message });
   }
 });
+
 // ============================================
 // EXPORT
 // ============================================
