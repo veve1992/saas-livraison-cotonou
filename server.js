@@ -215,16 +215,6 @@ app.post('/livreurs', async (req, res) => {
   }
 });
 
-    res.status(201).json({
-      success: true,
-      message: '✅ Livreur créé avec succès !',
-      livreur: result.rows[0]
-    });
-  } catch (e) {
-    res.status(500).json({ error: 'Creation failed' });
-  }
-});
-
 // ============================================
 // AUTHENTICATION ROUTES
 // ============================================
