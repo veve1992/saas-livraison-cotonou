@@ -172,18 +172,19 @@ router.post('/tracking', async (req, res) => {
 
 router.get('/tracking/:colis_id', async (req, res) => {
   try {
-    const { colis_id } = req.params;
-
-    // Récupérer la DERNIÈRE position
-    const tracking = await pool.query(
-      `SELECT * FROM tracking 
-       WHERE colis_id = $1 
-       ORDER BY created_at DESC 
-       LIMIT 1`,
+    const colis_id = req.params.colis_id;
+    
+    const result = await pool.query(
+      `SELECT t.*, c.livreur, l.nom as livreur_nom, l.phone as livreur_phone
+       FROM tracking t
+       LEFT JOIN colis c ON t.colis_id = c.id
+       LEFT JOIN livreurs l ON c.livreur = l.id
+       WHERE t.colis_id = $1
+       ORDER BY t.created_at DESC LIMIT 1`,
       [colis_id]
     );
 
-    if (tracking.rows.length === 0) {
+    if (result.rows.length === 0) {
       return res.json({ 
         message: 'Aucune position enregistrée encore',
         latitude: null,
@@ -191,13 +192,15 @@ router.get('/tracking/:colis_id', async (req, res) => {
       });
     }
 
-    const position = tracking.rows[0];
+    const position = result.rows[0];
 
     res.json({
       latitude: position.latitude,
       longitude: position.longitude,
       adresse: position.adresse,
       status: position.status,
+      livreur_nom: position.livreur_nom || 'N/A',
+      livreur_phone: position.livreur_phone || 'N/A',
       timestamp: position.created_at
     });
   } catch (error) {
@@ -205,7 +208,6 @@ router.get('/tracking/:colis_id', async (req, res) => {
     res.status(500).json({ error: error.message });
   }
 });
-
 // ====================================
 // 4. HISTORIQUE GPS D'UN COLIS
 // ====================================

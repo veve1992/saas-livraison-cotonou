@@ -68,7 +68,13 @@ app.get('/parcels', async (req, res) => {
 // GET ONE PARCEL
 app.get('/parcels/:id', async (req, res) => {
   try {
-    const result = await pool.query('SELECT * FROM colis WHERE id = $1', [req.params.id]);
+    const result = await pool.query(
+      `SELECT c.*, l.nom as livreur_nom, l.phone as livreur_phone
+       FROM colis c
+       LEFT JOIN livreurs l ON c.livreur = l.id
+       WHERE c.id = $1`,
+      [req.params.id]
+    );
     res.json(result.rows[0] || { error: 'Not found' });
   } catch (e) {
     res.status(500).json({ error: 'Database error' });
@@ -161,7 +167,7 @@ app.put('/parcels/:id', async (req, res) => {
 // GET ALL
 app.get('/livreurs', async (req, res) => {
   try {
-    const result = await pool.query('SELECT * FROM livreurs ORDER BY id DESC');
+    const result = await pool.query('SELECT DISTINCT ON (id) * FROM livreurs ORDER BY id');
     res.json(result.rows);
   } catch (e) {
     res.status(500).json({ error: 'Database error' });
