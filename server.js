@@ -183,10 +183,37 @@ app.post('/livreurs', async (req, res) => {
       return res.status(400).json({ error: 'Missing fields' });
     }
 
+    // Vérifier si le nom existe déjà
+    const existing = await pool.query(
+      'SELECT id FROM livreurs WHERE LOWER(nom) = LOWER($1)',
+      [nom]
+    );
+
+    if (existing.rows.length > 0) {
+      return res.status(400).json({ 
+        error: `⚠️ Le livreur "${nom}" existe déjà dans le système !` 
+      });
+    }
+
     const result = await pool.query(
       'INSERT INTO livreurs (nom, phone, colis_livres, revenus, rating, created_at) VALUES ($1, $2, 0, 0, 5.0, NOW()) RETURNING *',
       [nom, phone]
     );
+
+    res.status(201).json({
+      success: true,
+      message: '✅ Livreur créé avec succès !',
+      livreur: result.rows[0]
+    });
+  } catch (e) {
+    if (e.code === '23505') { // Unique constraint violation
+      return res.status(400).json({ 
+        error: `⚠️ Ce nom de livreur existe déjà !` 
+      });
+    }
+    res.status(500).json({ error: 'Creation failed' });
+  }
+});
 
     res.status(201).json({
       success: true,
