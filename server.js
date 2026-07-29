@@ -263,6 +263,71 @@ app.post('/auth/login', async (req, res) => {
     res.status(500).json({ error: error.message });
   }
 });
+// ============================================
+// TRACKING ROUTES
+// ============================================
+
+app.post('/tracking', async (req, res) => {
+  try {
+    const { colis_id, latitude, longitude, adresse, status, enterprise_id } = req.body;
+
+    if (!enterprise_id) {
+      return res.status(400).json({ error: 'enterprise_id requis' });
+    }
+
+    const result = await pool.query(
+      `INSERT INTO tracking (colis_id, latitude, longitude, adresse, status, enterprise_id, created_at)
+       VALUES ($1, $2, $3, $4, $5, $6, NOW()) RETURNING *`,
+      [colis_id, latitude, longitude, adresse, status, enterprise_id]
+    );
+    res.json({ success: true, tracking: result.rows[0] });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.get('/tracking/:colis_id', async (req, res) => {
+  try {
+    const colis_id = req.params.colis_id;
+    const enterprise_id = req.query.enterprise_id;
+
+    if (!enterprise_id) {
+      return res.status(400).json({ error: 'enterprise_id requis' });
+    }
+
+    const result = await pool.query(
+      `SELECT t.*, c.livreur, l.nom as livreur_nom, l.phone as livreur_phone
+       FROM tracking t
+       LEFT JOIN colis c ON t.colis_id = c.id
+       LEFT JOIN livreurs l ON c.livreur = l.id
+       WHERE t.colis_id = $1 AND c.enterprise_id = $2
+       ORDER BY t.created_at DESC LIMIT 1`,
+      [colis_id, enterprise_id]
+    );
+
+    if (result.rows.length === 0) {
+      return res.json({ 
+        message: 'Aucune position enregistrée encore',
+        latitude: null,
+        longitude: null
+      });
+    }
+
+    const position = result.rows[0];
+    res.json({
+      latitude: position.latitude,
+      longitude: position.longitude,
+      adresse: position.adresse,
+      status: position.status,
+      livreur_nom: position.livreur_nom || 'N/A',
+      livreur_phone: position.livreur_phone || 'N/A',
+      timestamp: position.created_at
+    });
+  } catch (error) {
+    console.error('Erreur get tracking:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
 
 // ============================================
 // EXPORT
