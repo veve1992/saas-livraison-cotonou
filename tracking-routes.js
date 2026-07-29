@@ -141,31 +141,24 @@ if (!nom || !signature) {
 // 2. ENVOYER POSITION GPS (TRACKING)
 // ====================================
 
-router.post('/tracking', async (req, res) => {
+app.post('/tracking', async (req, res) => {
   try {
-    const { colis_id, latitude, longitude, adresse } = req.body;
+    const { colis_id, latitude, longitude, adresse, status, enterprise_id } = req.body;
 
-    // Valider les données
-    if (!colis_id || !latitude || !longitude) {
-      return res.status(400).json({ error: 'Données manquantes' });
+    if (!enterprise_id) {
+      return res.status(400).json({ error: 'enterprise_id requis' });
     }
 
-    // Enregistrer la position
-    await pool.query(
-      `INSERT INTO tracking (colis_id, latitude, longitude, adresse, status, created_at)
-       VALUES ($1, $2, $3, $4, 'En route', NOW())`,
-      [colis_id, latitude, longitude, adresse]
+    const result = await pool.query(
+      `INSERT INTO tracking (colis_id, latitude, longitude, adresse, status, enterprise_id, created_at)
+       VALUES ($1, $2, $3, $4, $5, $6, NOW()) RETURNING *`,
+      [colis_id, latitude, longitude, adresse, status, enterprise_id]
     );
-    res.json({
-      success: true,
-      message: 'Position enregistrée'
-    });
+    res.json({ success: true, tracking: result.rows[0] });
   } catch (error) {
-    console.error('Erreur tracking:', error);
     res.status(500).json({ error: error.message });
   }
 });
-
 // ====================================
 // 3. OBTENIR POSITION EN DIRECT
 // ====================================
@@ -212,24 +205,45 @@ router.get('/tracking/:colis_id', async (req, res) => {
 // 4. HISTORIQUE GPS D'UN COLIS
 // ====================================
 
-router.get('/tracking-history/:colis_id', async (req, res) => {
+app.get('/tracking/:colis_id', async (req, res) => {
   try {
-    const { colis_id } = req.params;
+    const colis_id = req.params.colis_id;
+    const enterprise_id = req.query.enterprise_id;
 
-    const tracking = await pool.query(
-      `SELECT * FROM tracking 
-       WHERE colis_id = $1 
-       ORDER BY created_at ASC`,
-      [colis_id]
+    if (!enterprise_id) {
+      return res.status(400).json({ error: 'enterprise_id requis' });
+    }
+
+    const result = await pool.query(
+      `SELECT t.*, c.livreur, l.nom as livreur_nom, l.phone as livreur_phone
+       FROM tracking t
+       LEFT JOIN colis c ON t.colis_id = c.id
+       LEFT JOIN livreurs l ON c.livreur = l.id
+       WHERE t.colis_id = $1 AND c.enterprise_id = $2
+       ORDER BY t.created_at DESC LIMIT 1`,
+      [colis_id, enterprise_id]
     );
 
+    if (result.rows.length === 0) {
+      return res.json({ 
+        message: 'Aucune position enregistrée encore',
+        latitude: null,
+        longitude: null
+      });
+    }
+
+    const position = result.rows[0];
     res.json({
-      success: true,
-      total: tracking.rows.length,
-      positions: tracking.rows
+      latitude: position.latitude,
+      longitude: position.longitude,
+      adresse: position.adresse,
+      status: position.status,
+      livreur_nom: position.livreur_nom || 'N/A',
+      livreur_phone: position.livreur_phone || 'N/A',
+      timestamp: position.created_at
     });
   } catch (error) {
-    console.error('Erreur tracking history:', error);
+    console.error('Erreur get tracking:', error);
     res.status(500).json({ error: error.message });
   }
 });

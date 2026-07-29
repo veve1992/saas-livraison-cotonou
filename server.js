@@ -41,16 +41,21 @@ app.get('/health', (req, res) => {
 // GET ALL PARCELS WITH PAGINATION
 app.get('/parcels', async (req, res) => {
   try {
+    const enterprise_id = req.query.enterprise_id;
+    if (!enterprise_id) {
+      return res.status(400).json({ error: 'enterprise_id requis' });
+    }
+
     const page = parseInt(req.query.page) || 1;
     const limit = 50;
     const offset = (page - 1) * limit;
 
-    const countResult = await pool.query('SELECT COUNT(*) FROM colis WHERE status IS NOT NULL');
+    const countResult = await pool.query('SELECT COUNT(*) FROM colis WHERE enterprise_id = $1', [enterprise_id]);
     const total = parseInt(countResult.rows[0].count);
 
     const result = await pool.query(
-      'SELECT * FROM colis ORDER BY id DESC LIMIT $1 OFFSET $2',
-      [limit, offset]
+      'SELECT * FROM colis WHERE enterprise_id = $1 ORDER BY id DESC LIMIT $2 OFFSET $3',
+      [enterprise_id, limit, offset]
     );
 
     res.json({
@@ -64,7 +69,6 @@ app.get('/parcels', async (req, res) => {
     res.status(500).json({ error: error.message });
   }
 });
-
 // GET ONE PARCEL
 app.get('/parcels/:id', async (req, res) => {
   try {
@@ -83,45 +87,27 @@ app.get('/parcels/:id', async (req, res) => {
 // CREATE
 app.post('/parcels', async (req, res) => {
   try {
-    const { 
-      de, 
-      a, 
-      prix, 
-      nom_receptionnaire,
-      prenom_receptionnaire,
-      contact_receptionnaire,
-      adresse_livraison,
-      description_colis,
-      photo_colis,
-      status 
-    } = req.body;
+    const { de, a, prix, nom_receptionnaire, prenom_receptionnaire,
+      contact_receptionnaire, adresse_livraison, description_colis, photo_colis, status, enterprise_id } = req.body;
 
-     const query = `
+    if (!enterprise_id) {
+      return res.status(400).json({ error: 'enterprise_id requis' });
+    }
+
+    const query = `
       INSERT INTO colis 
       (de, a, prix, nom_receptionnaire, prenom_receptionnaire, contact_receptionnaire, 
-       adresse_livraison, description_colis, photo_colis, status, created_at, updated_at)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW(), NOW())
+       adresse_livraison, description_colis, photo_colis, status, enterprise_id, created_at, updated_at)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW(), NOW())
       RETURNING *
     `;
-    const values = [
-      de,
-      a,
-      prix,
-      nom_receptionnaire || '',
-      prenom_receptionnaire || '',
-      contact_receptionnaire || '',
-      adresse_livraison || '',
-      description_colis || '',
-      photo_colis || '',
-      status || 'En attente'
-    ];
+
+    const values = [de, a, prix, nom_receptionnaire || '', prenom_receptionnaire || '',
+      contact_receptionnaire || '', adresse_livraison || '', description_colis || '',
+      photo_colis || '', status || 'En attente', enterprise_id];
 
     const result = await pool.query(query, values);
-
-    res.json({
-      success: true,
-      colis: result.rows[0]
-    });
+    res.json({ success: true, colis: result.rows[0] });
   } catch (error) {
     console.error('Erreur:', error);
     res.status(500).json({ error: error.message });
@@ -167,37 +153,40 @@ app.put('/parcels/:id', async (req, res) => {
 // GET ALL
 app.get('/livreurs', async (req, res) => {
   try {
-    const result = await pool.query('SELECT DISTINCT ON (id) * FROM livreurs ORDER BY id');
+    const enterprise_id = req.query.enterprise_id;
+    if (!enterprise_id) {
+      return res.status(400).json({ error: 'enterprise_id requis' });
+    }
+
+    const result = await pool.query('SELECT * FROM livreurs WHERE enterprise_id = $1 ORDER BY id', [enterprise_id]);
     res.json(result.rows);
-  } catch (e) {
-    res.status(500).json({ error: 'Database error' });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
   }
 });
-
 // CREATE
 app.post('/livreurs', async (req, res) => {
   try {
-    const { nom, phone } = req.body;
+    const { nom, phone, enterprise_id } = req.body;
     
-    if (!nom || !phone) {
+    if (!nom || !phone || !enterprise_id) {
       return res.status(400).json({ error: 'Missing fields' });
     }
 
-    // Vérifier si le nom existe déjà
     const existing = await pool.query(
-      'SELECT id FROM livreurs WHERE LOWER(nom) = LOWER($1)',
-      [nom]
+      'SELECT id FROM livreurs WHERE LOWER(nom) = LOWER($1) AND enterprise_id = $2',
+      [nom, enterprise_id]
     );
 
     if (existing.rows.length > 0) {
       return res.status(400).json({ 
-        error: `⚠️ Le livreur "${nom}" existe déjà dans le système !` 
+        error: `⚠️ Le livreur "${nom}" existe déjà dans votre entreprise !` 
       });
     }
 
     const result = await pool.query(
-      'INSERT INTO livreurs (nom, phone, colis_livres, revenus, rating, created_at) VALUES ($1, $2, 0, 0, 5.0, NOW()) RETURNING *',
-      [nom, phone]
+      'INSERT INTO livreurs (nom, phone, enterprise_id, colis_livres, revenus, rating, created_at) VALUES ($1, $2, $3, 0, 0, 5.0, NOW()) RETURNING *',
+      [nom, phone, enterprise_id]
     );
 
     res.status(201).json({
@@ -206,7 +195,7 @@ app.post('/livreurs', async (req, res) => {
       livreur: result.rows[0]
     });
   } catch (e) {
-    if (e.code === '23505') { // Unique constraint violation
+    if (e.code === '23505') {
       return res.status(400).json({ 
         error: `⚠️ Ce nom de livreur existe déjà !` 
       });
@@ -214,7 +203,6 @@ app.post('/livreurs', async (req, res) => {
     res.status(500).json({ error: 'Creation failed' });
   }
 });
-
 // ============================================
 // AUTHENTICATION ROUTES
 // ============================================
