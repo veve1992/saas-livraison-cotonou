@@ -208,8 +208,32 @@ app.post('/livreurs', async (req, res) => {
 
 app.post('/auth/register', async (req, res) => {
   try {
-    const { email, password, nom_entreprise } = req.body;
+    const { email, password, nom_entreprise, country, phone_prefix } = req.body;
 
+    if (!email || !password || !nom_entreprise || !country) {
+      return res.status(400).json({ error: 'Tous les champs requis' });
+    }
+
+    const existing = await pool.query('SELECT id FROM entreprises WHERE email = $1', [email]);
+    if (existing.rows.length > 0) {
+      return res.status(400).json({ error: 'Email déjà utilisé' });
+    }
+
+    const result = await pool.query(
+      `INSERT INTO entreprises (email, password, nom_entreprise, country, phone_prefix, created_at)
+       VALUES ($1, $2, $3, $4, $5, NOW()) RETURNING id, email, nom_entreprise, country, phone_prefix`,
+      [email, password, nom_entreprise, country, phone_prefix || '+229']
+    );
+
+    res.status(201).json({
+      success: true,
+      message: '✅ Entreprise créée ! Connectez-vous.',
+      entreprise: result.rows[0]
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
     if (!email || !password || !nom_entreprise) {
       return res.status(400).json({ error: 'Tous les champs requis' });
     }
