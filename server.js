@@ -113,10 +113,14 @@ app.post('/parcels', async (req, res) => {
   }
 });
 // UPDATE PARCEL STATUS
-app.put('/parcels/:id', async (req, res) => {
+    app.put('/parcels/:id', async (req, res) => {
   try {
     const colis_id = req.params.id;
-    const { status } = req.body;
+    const { status, livreur, enterprise_id } = req.body;
+
+    if (!enterprise_id) {
+      return res.status(400).json({ error: 'enterprise_id requis' });
+    }
 
     if (!status) {
       return res.status(400).json({ error: 'Status manquant' });
@@ -124,10 +128,10 @@ app.put('/parcels/:id', async (req, res) => {
 
     const result = await pool.query(
       `UPDATE colis 
-       SET status = $1, updated_at = NOW(), date_livraison = NOW()
-       WHERE id = $2
+       SET status = $1, livreur = $2, updated_at = NOW(), date_livraison = NOW()
+       WHERE id = $3 AND enterprise_id = $4
        RETURNING *`,
-      [status, colis_id]
+      [status, livreur || null, colis_id, enterprise_id]
     );
 
     if (result.rows.length === 0) {
@@ -136,7 +140,7 @@ app.put('/parcels/:id', async (req, res) => {
 
     res.json({
       success: true,
-      message: '✅ Statut mis à jour',
+      message: '✅ Colis mis à jour',
       colis: result.rows[0]
     });
   } catch (error) {
@@ -144,7 +148,6 @@ app.put('/parcels/:id', async (req, res) => {
     res.status(500).json({ error: error.message });
   }
 });
-    
 // ============================================
 // LIVREURS ROUTES
 // ============================================
