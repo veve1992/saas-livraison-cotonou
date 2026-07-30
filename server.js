@@ -210,43 +210,22 @@ app.post('/auth/register', async (req, res) => {
   try {
     const { email, password, nom_entreprise, country, phone_prefix } = req.body;
 
+    // VALIDATION EN PREMIER (dans la fonction)
     if (!email || !password || !nom_entreprise || !country) {
       return res.status(400).json({ error: 'Tous les champs requis' });
     }
 
+    // Vérifier si email existe
     const existing = await pool.query('SELECT id FROM entreprises WHERE email = $1', [email]);
     if (existing.rows.length > 0) {
       return res.status(400).json({ error: 'Email déjà utilisé' });
     }
 
+    // Créer entreprise (AVEC country et phone_prefix)
     const result = await pool.query(
       `INSERT INTO entreprises (email, password, nom_entreprise, country, phone_prefix, created_at)
        VALUES ($1, $2, $3, $4, $5, NOW()) RETURNING id, email, nom_entreprise, country, phone_prefix`,
       [email, password, nom_entreprise, country, phone_prefix || '+229']
-    );
-
-    res.status(201).json({
-      success: true,
-      message: '✅ Entreprise créée ! Connectez-vous.',
-      entreprise: result.rows[0]
-    });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
-    if (!email || !password || !nom_entreprise) {
-      return res.status(400).json({ error: 'Tous les champs requis' });
-    }
-
-    const existing = await pool.query('SELECT id FROM entreprises WHERE email = $1', [email]);
-    if (existing.rows.length > 0) {
-      return res.status(400).json({ error: 'Email déjà utilisé' });
-    }
-
-    const result = await pool.query(
-      `INSERT INTO entreprises (email, password, nom_entreprise, created_at)
-       VALUES ($1, $2, $3, NOW()) RETURNING id, email, nom_entreprise`,
-      [email, password, nom_entreprise]
     );
 
     res.status(201).json({
@@ -268,7 +247,7 @@ app.post('/auth/login', async (req, res) => {
     }
 
     const result = await pool.query(
-      'SELECT id, email, nom_entreprise FROM entreprises WHERE email = $1 AND password = $2',
+      'SELECT id, email, nom_entreprise, country, phone_prefix FROM entreprises WHERE email = $1 AND password = $2',
       [email, password]
     );
 
