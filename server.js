@@ -270,6 +270,111 @@ app.post('/auth/login', async (req, res) => {
   }
 });
 // ============================================
+// LIVREUR AUTHENTICATION ROUTES
+// ============================================
+
+app.post('/auth/livreur/register', async (req, res) => {
+  try {
+    const { email, password, nom, phone, enterprise_id } = req.body;
+
+    if (!email || !password || !nom || !enterprise_id) {
+      return res.status(400).json({ error: 'Tous les champs requis' });
+    }
+
+    // Vérifier que l'entreprise existe
+    const entrepriseExists = await pool.query(
+      'SELECT id FROM entreprises WHERE id = $1',
+      [enterprise_id]
+    );
+    if (entrepriseExists.rows.length === 0) {
+      return res.status(400).json({ error: 'Entreprise introuvable' });
+    }
+
+    // Vérifier email unique
+    const existing = await pool.query(
+      'SELECT id FROM livreurs WHERE email = $1',
+      [email]
+    );
+    if (existing.rows.length > 0) {
+      return res.status(400).json({ error: 'Email déjà utilisé' });
+    }
+
+    // Créer livreur avec email/password
+    const result = await pool.query(
+      `INSERT INTO livreurs (email, password, nom, phone, enterprise_id, role, colis_livres, revenus, rating, created_at)
+       VALUES ($1, $2, $3, $4, $5, 'livreur', 0, 0, 5.0, NOW())
+       RETURNING id, email, nom, phone, enterprise_id, role`,
+      [email, password, nom, phone || '', enterprise_id]
+    );
+
+    res.status(201).json({
+      success: true,
+      message: '✅ Livreur créé ! Connectez-vous.',
+      livreur: result.rows[0]
+    });
+  } catch (error) {
+    console.error('Erreur register livreur:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+app.post('/auth/livreur/login', async (req, res) => {
+  try {
+    const { email, password } = req.body;
+
+    if (!email || !password) {
+      return res.status(400).json({ error: 'Email et mot de passe requis' });
+    }
+
+    // Chercher livreur avec email et password
+    const result = await pool.query(
+      `SELECT id, email, nom, phone, enterprise_id, role, colis_livres, revenus, rating
+       FROM livreurs
+       WHERE email = $1 AND password = $2 AND role = 'livreur'`,
+      [email, password]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(401).json({ error: 'Email ou mot de passe incorrect' });
+    }
+
+    const livreur = result.rows[0];
+
+    // Récupérer infos entreprise
+    const entrepriseResult = await pool.query(
+      'SELECT id, nom_entreprise, country, phone_prefix FROM entreprises WHERE id = $1',
+      [livreur.enterprise_id]
+    );
+
+    const entreprise = entrepriseResult.rows[0] || {};
+
+    res.json({
+      success: true,
+      message: '✅ Connecté !',
+      livreur: {
+        id: livreur.id,
+        email: livreur.email,
+        nom: livreur.nom,
+        phone: livreur.phone,
+        enterprise_id: livreur.enterprise_id,
+        role: 'livreur',
+        colis_livres: livreur.colis_livres,
+        revenus: livreur.revenus,
+        rating: livreur.rating
+      },
+      entreprise: {
+        id: entreprise.id,
+        nom_entreprise: entreprise.nom_entreprise,
+        country: entreprise.country,
+        phone_prefix: entreprise.phone_prefix
+      },
+      token: `token_livreur_${livreur.id}_${Date.now()}`
+    });
+  } catch (error) {
+    console.error('Erreur login livreur:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+// ============================================
 // TRACKING ROUTES
 // ============================================
 
