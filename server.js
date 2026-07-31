@@ -2,6 +2,8 @@ const express = require('express');
 const { Pool } = require('pg');
 const cors = require('cors');
 require('dotenv').config();
+const jwt = require('jsonwebtoken');
+const SECRET_KEY = process.env.SECRET_KEY || 'your-super-secret-key-change-in-production';
 
 const app = express();
 
@@ -15,6 +17,41 @@ app.use(cors());
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
+// ============================================
+// JWT FUNCTIONS
+// ============================================
+
+// Fonction générer JWT
+const generateJWT = (id, email, type, enterprise_id) => {
+  return jwt.sign(
+    {
+      id: id,
+      email: email,
+      type: type,  // 'gestionnaire' ou 'livreur'
+      enterprise_id: enterprise_id,
+      iat: Math.floor(Date.now() / 1000),
+      exp: Math.floor(Date.now() / 1000) + (24 * 60 * 60)  // 24h expiration
+    },
+    SECRET_KEY
+  );
+};
+
+// Middleware vérifier JWT
+const verifyJWT = (req, res, next) => {
+  const token = req.headers.authorization?.split(' ')[1];
+  
+  if (!token) {
+    return res.status(401).json({ error: 'Token manquant' });
+  }
+
+  try {
+    const decoded = jwt.verify(token, SECRET_KEY);
+    req.user = decoded;  // Stocker dans req pour utiliser dans routes
+    next();
+  } catch (error) {
+    return res.status(401).json({ error: 'Token invalide ou expiré' });
+  }
+};
 // ============================================
 // HEALTH CHECK
 // ============================================
@@ -38,7 +75,7 @@ app.get('/health', (req, res) => {
 // ============================================
 
 // GET ALL PARCELS WITH PAGINATION
-app.get('/parcels', async (req, res) => {
+app.get('/parcels', verifyJWT, async (req, res) => {
   try {
     const enterprise_id = req.query.enterprise_id;
     if (!enterprise_id) {
@@ -69,7 +106,7 @@ app.get('/parcels', async (req, res) => {
   }
 });
 // GET ONE PARCEL
-app.get('/parcels/:id', async (req, res) => {
+app.get('/parcels/:id', verifyJWT, async (req, res) => {
   try {
     const result = await pool.query(
       `SELECT c.*, l.nom as livreur_nom, l.phone as livreur_phone
@@ -84,7 +121,7 @@ app.get('/parcels/:id', async (req, res) => {
   }
 });
 // CREATE
-app.post('/parcels', async (req, res) => {
+app.post('/parcels', verifyJWT, async (req, res) => {
   try {
     const { de, a, prix, nom_receptionnaire, prenom_receptionnaire,
       contact_receptionnaire, adresse_livraison, description_colis, photo_colis, status, enterprise_id } = req.body;
@@ -113,7 +150,7 @@ app.post('/parcels', async (req, res) => {
   }
 });
 // UPDATE PARCEL STATUS
-    app.put('/parcels/:id', async (req, res) => {
+    app.put('/parcels/:id', verifyJWT, async (req, res) => {
   try {
     const colis_id = req.params.id;
     const { status, livreur, enterprise_id } = req.body;
@@ -153,7 +190,7 @@ app.post('/parcels', async (req, res) => {
 // ============================================
 
 // GET ALL
-app.get('/livreurs', async (req, res) => {
+app.get('/livreurs', verifyJWT, async (req, res) => {
   try {
     const enterprise_id = req.query.enterprise_id;
     if (!enterprise_id) {
@@ -167,7 +204,7 @@ app.get('/livreurs', async (req, res) => {
   }
 });
 // CREATE
-app.post('/livreurs', async (req, res) => {
+app.post('/livreurs', verifyJWT, async (req, res) => {
   try {
     const { nom, phone, enterprise_id } = req.body;
     
@@ -231,11 +268,19 @@ app.post('/auth/register', async (req, res) => {
       [email, password, nom_entreprise, country, phone_prefix || '+229']
     );
 
-    res.status(201).json({
-      success: true,
-      message: '✅ Entreprise créée ! Connectez-vous.',
-      entreprise: result.rows[0]
-    });
+   const token = generateJWT(
+  result.rows[0].id,
+  result.rows[0].email,
+  'gestionnaire',
+  result.rows[0].id
+);
+
+res.status(201).json({
+  success: true,
+  message: '✅ Entreprise créée ! Connectez-vous.',
+  entreprise: result.rows[0],
+  token: token
+});
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -259,12 +304,19 @@ app.post('/auth/login', async (req, res) => {
     }
 
     const entreprise = result.rows[0];
-    res.json({
-      success: true,
-      message: '✅ Connecté !',
-      entreprise: entreprise,
-      token: `token_${entreprise.id}_${Date.now()}`
-    });
+  const token = generateJWT(
+  entreprise.id,
+  entreprise.email,
+  'gestionnaire',
+  entreprise.id
+);
+
+res.json({
+  success: true,
+  message: '✅ Connecté !',
+  entreprise: entreprise,
+  token: token
+});  
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -307,11 +359,19 @@ app.post('/auth/livreur/register', async (req, res) => {
       [email, password, nom, phone || '', enterprise_id]
     );
 
-    res.status(201).json({
-      success: true,
-      message: '✅ Livreur créé ! Connectez-vous.',
-      livreur: result.rows[0]
-    });
+   const token = generateJWT(
+  result.rows[0].id,
+  result.rows[0].email,
+  'livreur',
+  result.rows[0].enterprise_id
+);
+
+res.status(201).json({
+  success: true,
+  message: '✅ Livreur créé ! Connectez-vous.',
+  livreur: result.rows[0],
+  token: token
+});
   } catch (error) {
     console.error('Erreur register livreur:', error);
     res.status(500).json({ error: error.message });
@@ -346,29 +406,36 @@ app.post('/auth/livreur/login', async (req, res) => {
     );
 
     const entreprise = entrepriseResult.rows[0] || {};
+const token = generateJWT(
+  livreur.id,
+  livreur.email,
+  'livreur',
+  livreur.enterprise_id
+);
 
-    res.json({
-      success: true,
-      message: '✅ Connecté !',
-      livreur: {
-        id: livreur.id,
-        email: livreur.email,
-        nom: livreur.nom,
-        phone: livreur.phone,
-        enterprise_id: livreur.enterprise_id,
-        role: 'livreur',
-        colis_livres: livreur.colis_livres,
-        revenus: livreur.revenus,
-        rating: livreur.rating
-      },
-      entreprise: {
-        id: entreprise.id,
-        nom_entreprise: entreprise.nom_entreprise,
-        country: entreprise.country,
-        phone_prefix: entreprise.phone_prefix
-      },
-      token: `token_livreur_${livreur.id}_${Date.now()}`
-    });
+res.json({
+  success: true,
+  message: '✅ Connecté !',
+  livreur: {
+    id: livreur.id,
+    email: livreur.email,
+    nom: livreur.nom,
+    phone: livreur.phone,
+    enterprise_id: livreur.enterprise_id,
+    role: 'livreur',
+    colis_livres: livreur.colis_livres,
+    revenus: livreur.revenus,
+    rating: livreur.rating
+  },
+  entreprise: {
+    id: entreprise.id,
+    nom_entreprise: entreprise.nom_entreprise,
+    country: entreprise.country,
+    phone_prefix: entreprise.phone_prefix
+  },
+  token: token
+});
+   
   } catch (error) {
     console.error('Erreur login livreur:', error);
     res.status(500).json({ error: error.message });
@@ -378,7 +445,7 @@ app.post('/auth/livreur/login', async (req, res) => {
 // TRACKING ROUTES
 // ============================================
 
-app.post('/tracking', async (req, res) => {
+app.post('/tracking', verifyJWT, async (req, res) => {
   try {
     const { colis_id, latitude, longitude, adresse, status, enterprise_id } = req.body;
 
@@ -397,7 +464,7 @@ app.post('/tracking', async (req, res) => {
   }
 });
 
-app.get('/tracking/:colis_id', async (req, res) => {
+app.get('/tracking/:colis_id', verifyJWT, async (req, res) => {
   try {
     const colis_id = req.params.colis_id;
     const enterprise_id = req.query.enterprise_id;
@@ -443,7 +510,7 @@ app.get('/tracking/:colis_id', async (req, res) => {
 // GET COLIS D'UN LIVREUR SPÉCIFIQUE
 // ============================================
 
-app.get('/livreur/mes-colis/:livreur_id', async (req, res) => {
+app.get('/livreur/mes-colis/:livreur_id', verifyJWT, async (req, res) => {
   try {
     const livreur_id = req.params.livreur_id;
     const enterprise_id = req.query.enterprise_id;
