@@ -439,7 +439,55 @@ app.get('/tracking/:colis_id', async (req, res) => {
     res.status(500).json({ error: error.message });
   }
 });
+// ============================================
+// GET COLIS D'UN LIVREUR SPÉCIFIQUE
+// ============================================
 
+app.get('/livreur/mes-colis/:livreur_id', async (req, res) => {
+  try {
+    const livreur_id = req.params.livreur_id;
+    const enterprise_id = req.query.enterprise_id;
+
+    if (!enterprise_id) {
+      return res.status(400).json({ error: 'enterprise_id requis' });
+    }
+
+    const page = parseInt(req.query.page) || 1;
+    const limit = 50;
+    const offset = (page - 1) * limit;
+
+    // Vérifier que le livreur appartient à cette entreprise
+    const livreurCheck = await pool.query(
+      'SELECT id FROM livreurs WHERE id = $1 AND enterprise_id = $2',
+      [livreur_id, enterprise_id]
+    );
+    if (livreurCheck.rows.length === 0) {
+      return res.status(403).json({ error: 'Accès refusé' });
+    }
+
+    // Récupérer les colis du livreur
+    const countResult = await pool.query(
+      'SELECT COUNT(*) FROM colis WHERE livreur = $1 AND enterprise_id = $2',
+      [livreur_id, enterprise_id]
+    );
+    const total = parseInt(countResult.rows[0].count);
+
+    const result = await pool.query(
+      'SELECT * FROM colis WHERE livreur = $1 AND enterprise_id = $2 ORDER BY id DESC LIMIT $3 OFFSET $4',
+      [livreur_id, enterprise_id, limit, offset]
+    );
+
+    res.json({
+      data: result.rows,
+      page: page,
+      limit: limit,
+      total: total,
+      pages: Math.ceil(total / limit)
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
 // ============================================
 // EXPORT
 // ============================================
