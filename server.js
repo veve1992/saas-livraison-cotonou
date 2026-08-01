@@ -280,93 +280,129 @@ app.post('/livreurs', verifyJWT, async (req, res) => {
 // ============================================
 // AUTHENTICATION ROUTES
 // ============================================
-
 app.post('/auth/register', async (req, res) => {
-  try {
-    const { email, password, nom_entreprise, country, phone_prefix } = req.body;
+  const { email, password, nom_entreprise, company_code, country, phone_prefix } = req.body;
 
-    // VALIDATION EN PREMIER (dans la fonction)
-    if (!email || !password || !nom_entreprise || !country) {
-      return res.status(400).json({ error: 'Tous les champs requis' });
-    }
-
-    // Vérifier si email existe
-    const existing = await pool.query('SELECT id FROM entreprises WHERE email = $1', [email]);
-    if (existing.rows.length > 0) {
-      return res.status(400).json({ error: 'Email déjà utilisé' });
-    }
-
-    // Créer entreprise (AVEC country et phone_prefix)
-    const result = await pool.query(
-      `INSERT INTO entreprises (email, password, nom_entreprise, country, phone_prefix, created_at)
-       VALUES ($1, $2, $3, $4, $5, NOW()) RETURNING id, email, nom_entreprise, country, phone_prefix`,
-      [email, password, nom_entreprise, country, phone_prefix || '+229']
-    );
-
-   const token = generateJWT(
-  result.rows[0].id,
-  result.rows[0].email,
-  'gestionnaire',
-  result.rows[0].id
-);
-
-res.status(201).json({
-  success: true,
-  message: '✅ Entreprise créée ! Connectez-vous.',
-  entreprise: result.rows[0],
-  token: token
-});
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
-
-app.post('/auth/login', async (req, res) => {
-  try {
-    const { email, password } = req.body;
-
-    if (!email || !password) {
-      return res.status(400).json({ error: 'Email et mot de passe requis' });
-    }
-
-    const result = await pool.query(
-      'SELECT id, email, nom_entreprise, country, phone_prefix FROM entreprises WHERE email = $1 AND password = $2',
-      [email, password]
-    );
-
-    if (result.rows.length === 0) {
-      return res.status(401).json({ error: 'Email ou mot de passe incorrect' });
-    }
-
-    const entreprise = result.rows[0];
-  const token = generateJWT(
-  entreprise.id,
-  entreprise.email,
-  'gestionnaire',
-  entreprise.id
-);
-
-res.json({
-  success: true,
-  message: '✅ Connecté !',
-  entreprise: entreprise,
-  token: token
-});  
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
-// ============================================
-// LIVREUR AUTHENTICATION ROUTES
-// ============================================
-app.post('/auth/livreur/register', async (req, res) => {
-  const { nom, phone, email, password, enterprise_id } = req.body;
-
-  if (!nom || !phone || !email || !password || !enterprise_id) {
+  if (!email || !password || !nom_entreprise || !company_code || !country) {
     return res.status(400).json({ error: '❌ Tous les champs sont requis' });
   }
 
   try {
+    // ✅ VÉRIFIER QUE LE COMPANY_CODE N'EXISTE PAS DÉJÀ
+    const checkCode = await pool.query(
+      'SELECT id FROM entreprises WHERE company_code = $1',
+      [company_code.toUpperCase()]
+    );
+
+    if (checkCode.rows.length > 0) {
+      return res.status(400).json({ error: '❌ Ce code entreprise existe déjà' });
+    }
+
+    // ✅ VÉRIFIER QUE L'EMAIL N'EXISTE PAS
+    const checkEmail = await pool.query(
+      'SELECT id FROM entreprises WHERE email = $1',
+      [email]
+    );
+
+    if (checkEmail.rows.length > 0) {
+      return res.status(400).json({ error: '❌ Cet email est déjà utilisé' });
+    }
+
+    // Hash password
+    const hashedPassword = await bcrypt.hash(password, 10);
+
+    // Créer l'entreprise avec company_code
+    const result = await pool.query(
+      `INSERT INTO entreprises (email, password, nom_entreprise, company_code, country, phone_prefix, created_at, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, NOW(), NOW())
+       RETURNING id, email, nom_entreprise, company_code, country, phone_prefix`,
+      [email, hashedPassword, nom_entreprise, company_code.toUpperCase(), country, phone_prefix]
+    );
+
+    const entreprise = result.rows[0];
+    const token = generateJWT(entreprise.id, entreprise.email, 'gestionnaire', entreprise.id);
+
+    res.json({
+      message: '✅ Entreprise inscrite avec succès',
+      entreprise,
+      token
+    });
+  } catch (error) {
+    console.error('Erreur:', error);
+    res.status(500).json({ error: 'Erreur lors de l\'inscription' });
+  }
+});
+app.post('/auth/login', async (req, res) => {
+  const { email, password } = req.body;
+
+  if (!email || !password) {
+    return res.status(400).json({ error: '❌ Email et mot de passe requis' });
+  }
+
+  try {
+    // Chercher l'entreprise par email
+    const result = await pool.query(
+      'SELECT * FROM entreprises WHERE email = $1',
+      [email]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(400).json({ error: '❌ Email ou mot de passe incorrect' });
+    }
+
+    const entreprise = result.rows[0];
+
+    // Vérifier le mot de passe
+    const passwordMatch = await bcrypt.compare(password, entreprise.password);
+
+    if (!passwordMatch) {
+      return res.status(400).json({ error: '❌ Email ou mot de passe incorrect' });
+    }
+
+    // Générer JWT
+    const token = generateJWT(entreprise.id, entreprise.email, 'gestionnaire', entreprise.id);
+
+    res.json({
+      message: '✅ Connexion réussie',
+      entreprise: {
+        id: entreprise.id,
+        email: entreprise.email,
+        nom_entreprise: entreprise.nom_entreprise,
+        company_code: entreprise.company_code,
+        country: entreprise.country,
+        phone_prefix: entreprise.phone_prefix
+      },
+      token
+    });
+  } catch (error) {
+    console.error('Erreur:', error);
+    res.status(500).json({ error: 'Erreur lors de la connexion' });
+  }
+});
+
+// ============================================
+// LIVREUR AUTHENTICATION ROUTES
+// ============================================
+app.post('/auth/livreur/register', async (req, res) => {
+  const { nom, phone, email, password, company_code } = req.body;
+
+  if (!nom || !phone || !email || !password || !company_code) {
+    return res.status(400).json({ error: '❌ Tous les champs sont requis' });
+  }
+
+  try {
+    // ✅ CHERCHER L'ENTREPRISE PAR COMPANY_CODE
+    const entrepriseResult = await pool.query(
+      'SELECT id FROM entreprises WHERE company_code = $1',
+      [company_code.toUpperCase()]
+    );
+
+    if (entrepriseResult.rows.length === 0) {
+      return res.status(400).json({ error: '❌ Code entreprise invalide' });
+    }
+
+    const enterprise_id = entrepriseResult.rows[0].id;
+
     // ✅ VÉRIFIER SI LIVREUR EXISTE DÉJÀ
     const checkLivreur = await pool.query(
       'SELECT id FROM livreurs WHERE (nom = $1 AND email = $2 AND enterprise_id = $3) OR (email = $4 AND enterprise_id = $5)',
@@ -390,12 +426,21 @@ app.post('/auth/livreur/register', async (req, res) => {
 
     const livreur = result.rows[0];
 
+    // Récupérer les données de l'entreprise
+    const entrepriseData = await pool.query(
+      'SELECT id, nom_entreprise, country, phone_prefix FROM entreprises WHERE id = $1',
+      [enterprise_id]
+    );
+
+    const entreprise = entrepriseData.rows[0];
+
     // Générer JWT
     const token = generateJWT(livreur.id, livreur.email, 'livreur', enterprise_id);
 
     res.json({
       message: '✅ Livreur inscrit avec succès',
       livreur,
+      entreprise,
       token
     });
   } catch (error) {
@@ -404,69 +449,77 @@ app.post('/auth/livreur/register', async (req, res) => {
   }
 });
 app.post('/auth/livreur/login', async (req, res) => {
-  try {
-    const { email, password } = req.body;
+  const { email, password, company_code } = req.body;
 
-    if (!email || !password) {
-      return res.status(400).json({ error: 'Email et mot de passe requis' });
+  if (!email || !password || !company_code) {
+    return res.status(400).json({ error: '❌ Email, mot de passe et code entreprise requis' });
+  }
+
+  try {
+    // ✅ CHERCHER L'ENTREPRISE PAR COMPANY_CODE
+    const entrepriseResult = await pool.query(
+      'SELECT id FROM entreprises WHERE company_code = $1',
+      [company_code.toUpperCase()]
+    );
+
+    if (entrepriseResult.rows.length === 0) {
+      return res.status(400).json({ error: '❌ Code entreprise invalide' });
     }
 
-    // Chercher livreur avec email et password
+    const enterprise_id = entrepriseResult.rows[0].id;
+
+    // Chercher le livreur par email + enterprise_id
     const result = await pool.query(
-      `SELECT id, email, nom, phone, enterprise_id, role, colis_livres, revenus, rating
-       FROM livreurs
-       WHERE email = $1 AND password = $2 AND role = 'livreur'`,
-      [email, password]
+      'SELECT * FROM livreurs WHERE email = $1 AND enterprise_id = $2',
+      [email, enterprise_id]
     );
 
     if (result.rows.length === 0) {
-      return res.status(401).json({ error: 'Email ou mot de passe incorrect' });
+      return res.status(400).json({ error: '❌ Email ou mot de passe incorrect' });
     }
 
     const livreur = result.rows[0];
 
-    // Récupérer infos entreprise
-    const entrepriseResult = await pool.query(
+    // Vérifier le mot de passe
+    const passwordMatch = await bcrypt.compare(password, livreur.password);
+
+    if (!passwordMatch) {
+      return res.status(400).json({ error: '❌ Email ou mot de passe incorrect' });
+    }
+
+    // Récupérer les données de l'entreprise
+    const entrepriseData = await pool.query(
       'SELECT id, nom_entreprise, country, phone_prefix FROM entreprises WHERE id = $1',
-      [livreur.enterprise_id]
+      [enterprise_id]
     );
 
-    const entreprise = entrepriseResult.rows[0] || {};
-const token = generateJWT(
-  livreur.id,
-  livreur.email,
-  'livreur',
-  livreur.enterprise_id
-);
+    const entreprise = entrepriseData.rows[0];
 
-res.json({
-  success: true,
-  message: '✅ Connecté !',
-  livreur: {
-    id: livreur.id,
-    email: livreur.email,
-    nom: livreur.nom,
-    phone: livreur.phone,
-    enterprise_id: livreur.enterprise_id,
-    role: 'livreur',
-    colis_livres: livreur.colis_livres,
-    revenus: livreur.revenus,
-    rating: livreur.rating
-  },
-  entreprise: {
-    id: entreprise.id,
-    nom_entreprise: entreprise.nom_entreprise,
-    country: entreprise.country,
-    phone_prefix: entreprise.phone_prefix
-  },
-  token: token
-});
-   
+    // Générer JWT
+    const token = generateJWT(livreur.id, livreur.email, 'livreur', enterprise_id);
+
+    res.json({
+      message: '✅ Connexion réussie',
+      livreur: {
+        id: livreur.id,
+        nom: livreur.nom,
+        phone: livreur.phone,
+        email: livreur.email,
+        enterprise_id: livreur.enterprise_id,
+        role: livreur.role,
+        colis_livres: livreur.colis_livres,
+        revenus: livreur.revenus,
+        rating: livreur.rating
+      },
+      entreprise,
+      token
+    });
   } catch (error) {
-    console.error('Erreur login livreur:', error);
-    res.status(500).json({ error: error.message });
+    console.error('Erreur:', error);
+    res.status(500).json({ error: 'Erreur lors de la connexion' });
   }
 });
+
 // ============================================
 // TRACKING ROUTES
 // ============================================
