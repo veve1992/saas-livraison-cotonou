@@ -107,17 +107,67 @@ app.get('/parcels', verifyJWT, async (req, res) => {
   }
 });
 // GET ONE PARCEL
+// Route 1 : GET /parcels/:id (PROTÉGÉE - Gestionnaire/Livreur)
 app.get('/parcels/:id', verifyJWT, async (req, res) => {
   try {
+    const colis_id = req.params.id;
+    const enterprise_id = req.user.enterprise_id;
+
+    // Vérifier que le colis appartient à l'entreprise
     const result = await pool.query(
       `SELECT c.*, l.nom as livreur_nom, l.phone as livreur_phone
        FROM colis c
        LEFT JOIN livreurs l ON c.livreur = l.id
-       WHERE c.id = $1`,
-      [req.params.id]
+       WHERE c.id = $1 AND c.enterprise_id = $2`,
+      [colis_id, enterprise_id]
     );
-    res.json(result.rows[0] || { error: 'Not found' });
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Colis non trouvé' });
+    }
+
+    res.json(result.rows[0]);
   } catch (e) {
+    console.error('Erreur:', e);
+    res.status(500).json({ error: 'Database error' });
+  }
+});
+
+// Route 2 : GET /tracking/public/:company_code/:colis_id (PUBLIQUE - Client)
+app.get('/tracking/public/:company_code/:colis_id', async (req, res) => {
+  try {
+    const { company_code, colis_id } = req.params;
+
+    // ✅ VÉRIFIER QUE L'ENTREPRISE EXISTE
+    const entrepriseResult = await pool.query(
+      'SELECT id FROM entreprises WHERE company_code = $1',
+      [company_code.toUpperCase()]
+    );
+
+    if (entrepriseResult.rows.length === 0) {
+      return res.status(403).json({ error: 'Entreprise non trouvée' });
+    }
+
+    const enterprise_id = entrepriseResult.rows[0].id;
+
+    // ✅ CHERCHER LE COLIS
+    const colisResult = await pool.query(
+      `SELECT c.*, l.nom as livreur_nom, l.phone as livreur_phone
+       FROM colis c
+       LEFT JOIN livreurs l ON c.livreur = l.id
+       WHERE c.id = $1 AND c.enterprise_id = $2`,
+      [colis_id, enterprise_id]
+    );
+
+    if (colisResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Colis non trouvé ou accès refusé' });
+    }
+
+    res.json({
+      colis: colisResult.rows[0]
+    });
+  } catch (e) {
+    console.error('Erreur:', e);
     res.status(500).json({ error: 'Database error' });
   }
 });
