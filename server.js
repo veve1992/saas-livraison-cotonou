@@ -205,41 +205,38 @@ app.get('/livreurs', verifyJWT, async (req, res) => {
 });
 // CREATE
 app.post('/livreurs', verifyJWT, async (req, res) => {
-  try {
-    const { nom, phone, enterprise_id } = req.body;
-    
-    if (!nom || !phone || !enterprise_id) {
-      return res.status(400).json({ error: 'Missing fields' });
-    }
+  const { nom, phone, enterprise_id } = req.body;
 
-    const existing = await pool.query(
-      'SELECT id FROM livreurs WHERE LOWER(nom) = LOWER($1) AND enterprise_id = $2',
+  if (!nom || !phone || !enterprise_id) {
+    return res.status(400).json({ error: '❌ Tous les champs sont requis' });
+  }
+
+  try {
+    // ✅ VÉRIFIER SI LIVREUR EXISTE DÉJÀ (PAR NOM + ENTERPRISE)
+    const checkLivreur = await pool.query(
+      'SELECT id FROM livreurs WHERE nom = $1 AND enterprise_id = $2',
       [nom, enterprise_id]
     );
 
-    if (existing.rows.length > 0) {
-      return res.status(400).json({ 
-        error: `⚠️ Le livreur "${nom}" existe déjà dans votre entreprise !` 
-      });
+    if (checkLivreur.rows.length > 0) {
+      return res.status(400).json({ error: '❌ Un livreur avec ce nom existe déjà dans cette entreprise' });
     }
 
+    // Créer le livreur (sans email/password = simple création par gestionnaire)
     const result = await pool.query(
-      'INSERT INTO livreurs (nom, phone, enterprise_id, colis_livres, revenus, rating, created_at) VALUES ($1, $2, $3, 0, 0, 5.0, NOW()) RETURNING *',
+      `INSERT INTO livreurs (nom, phone, enterprise_id, role, colis_livres, revenus, rating)
+       VALUES ($1, $2, $3, 'livreur', 0, '0', '5.0')
+       RETURNING id, nom, phone, enterprise_id, role`,
       [nom, phone, enterprise_id]
     );
 
-    res.status(201).json({
-      success: true,
-      message: '✅ Livreur créé avec succès !',
+    res.json({
+      message: '✅ Livreur ajouté avec succès',
       livreur: result.rows[0]
     });
-  } catch (e) {
-    if (e.code === '23505') {
-      return res.status(400).json({ 
-        error: `⚠️ Ce nom de livreur existe déjà !` 
-      });
-    }
-    res.status(500).json({ error: 'Creation failed' });
+  } catch (error) {
+    console.error('Erreur:', error);
+    res.status(500).json({ error: 'Erreur lors de l\'ajout du livreur' });
   }
 });
 // ============================================
@@ -324,57 +321,48 @@ res.json({
 // ============================================
 // LIVREUR AUTHENTICATION ROUTES
 // ============================================
-
 app.post('/auth/livreur/register', async (req, res) => {
+  const { nom, phone, email, password, enterprise_id } = req.body;
+
+  if (!nom || !phone || !email || !password || !enterprise_id) {
+    return res.status(400).json({ error: '❌ Tous les champs sont requis' });
+  }
+
   try {
-    const { email, password, nom, phone, enterprise_id } = req.body;
-
-    if (!email || !password || !nom || !enterprise_id) {
-      return res.status(400).json({ error: 'Tous les champs requis' });
-    }
-
-    // Vérifier que l'entreprise existe
-    const entrepriseExists = await pool.query(
-      'SELECT id FROM entreprises WHERE id = $1',
-      [enterprise_id]
+    // ✅ VÉRIFIER SI LIVREUR EXISTE DÉJÀ
+    const checkLivreur = await pool.query(
+      'SELECT id FROM livreurs WHERE (nom = $1 AND email = $2 AND enterprise_id = $3) OR (email = $4 AND enterprise_id = $5)',
+      [nom, email, enterprise_id, email, enterprise_id]
     );
-    if (entrepriseExists.rows.length === 0) {
-      return res.status(400).json({ error: 'Entreprise introuvable' });
+
+    if (checkLivreur.rows.length > 0) {
+      return res.status(400).json({ error: '❌ Ce livreur existe déjà pour cette entreprise' });
     }
 
-    // Vérifier email unique
-    const existing = await pool.query(
-      'SELECT id FROM livreurs WHERE email = $1',
-      [email]
-    );
-    if (existing.rows.length > 0) {
-      return res.status(400).json({ error: 'Email déjà utilisé' });
-    }
+    // Hash password
+    const hashedPassword = await bcrypt.hash(password, 10);
 
-    // Créer livreur avec email/password
+    // Créer le livreur
     const result = await pool.query(
-      `INSERT INTO livreurs (email, password, nom, phone, enterprise_id, role, colis_livres, revenus, rating, created_at)
-       VALUES ($1, $2, $3, $4, $5, 'livreur', 0, 0, 5.0, NOW())
-       RETURNING id, email, nom, phone, enterprise_id, role`,
-      [email, password, nom, phone || '', enterprise_id]
+      `INSERT INTO livreurs (nom, phone, email, password, enterprise_id, role, colis_livres, revenus, rating)
+       VALUES ($1, $2, $3, $4, $5, 'livreur', 0, '0', '5.0')
+       RETURNING id, nom, phone, email, enterprise_id`,
+      [nom, phone, email, hashedPassword, enterprise_id]
     );
 
-   const token = generateJWT(
-  result.rows[0].id,
-  result.rows[0].email,
-  'livreur',
-  result.rows[0].enterprise_id
-);
+    const livreur = result.rows[0];
 
-res.status(201).json({
-  success: true,
-  message: '✅ Livreur créé ! Connectez-vous.',
-  livreur: result.rows[0],
-  token: token
-});
+    // Générer JWT
+    const token = generateJWT(livreur.id, livreur.email, 'livreur', enterprise_id);
+
+    res.json({
+      message: '✅ Livreur inscrit avec succès',
+      livreur,
+      token
+    });
   } catch (error) {
-    console.error('Erreur register livreur:', error);
-    res.status(500).json({ error: error.message });
+    console.error('Erreur:', error);
+    res.status(500).json({ error: 'Erreur lors de l\'inscription' });
   }
 });
 app.post('/auth/livreur/login', async (req, res) => {
