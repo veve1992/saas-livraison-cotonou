@@ -150,26 +150,64 @@ app.post('/parcels', verifyJWT, async (req, res) => {
   }
 });
 // UPDATE PARCEL STATUS
-    app.put('/parcels/:id', verifyJWT, async (req, res) => {
+   app.put('/parcels/:id', verifyJWT, async (req, res) => {
   try {
     const colis_id = req.params.id;
-    const { status, livreur, enterprise_id } = req.body;
-
+    const { status, livreur, enterprise_id, latitude, longitude, signature } = req.body;
+    
     if (!enterprise_id) {
       return res.status(400).json({ error: 'enterprise_id requis' });
     }
-
     if (!status) {
       return res.status(400).json({ error: 'Status manquant' });
     }
 
-    const result = await pool.query(
-      `UPDATE colis 
-       SET status = $1, livreur = $2, updated_at = NOW(), date_livraison = NOW()
-       WHERE id = $3 AND enterprise_id = $4
-       RETURNING *`,
-      [status, livreur || null, colis_id, enterprise_id]
+    // Vérifier que le colis appartient à l'entreprise
+    const checkColis = await pool.query(
+      'SELECT * FROM colis WHERE id = $1 AND enterprise_id = $2',
+      [colis_id, enterprise_id]
     );
+
+    if (checkColis.rows.length === 0) {
+      return res.status(403).json({ error: '❌ Accès refusé à ce colis' });
+    }
+
+    // Construire la requête UPDATE dynamiquement
+    let updateQuery = `UPDATE colis SET status = $1, updated_at = NOW()`;
+    let params = [status];
+    let paramIndex = 2;
+
+    // Ajouter livreur si fourni
+    if (livreur) {
+      updateQuery += `, livreur = $${paramIndex}`;
+      params.push(livreur);
+      paramIndex++;
+    }
+
+    // Ajouter GPS si fourni
+    if (latitude && longitude) {
+      updateQuery += `, latitude = $${paramIndex}, longitude = $${paramIndex + 1}`;
+      params.push(latitude, longitude);
+      paramIndex += 2;
+    }
+
+    // Ajouter signature si fournie
+    if (signature) {
+      updateQuery += `, signature_id = $${paramIndex}`;
+      params.push(signature);
+      paramIndex++;
+    }
+
+    // ✅ ENREGISTRER DATE_LIVRAISON SEULEMENT SI STATUS = 'LIVRÉ'
+    if (status === 'Livré') {
+      updateQuery += `, date_livraison = NOW()`;
+    }
+
+    // Ajouter WHERE
+    updateQuery += ` WHERE id = $${paramIndex} AND enterprise_id = $${paramIndex + 1} RETURNING *`;
+    params.push(colis_id, enterprise_id);
+
+    const result = await pool.query(updateQuery, params);
 
     if (result.rows.length === 0) {
       return res.status(404).json({ error: 'Colis non trouvé' });
