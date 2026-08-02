@@ -117,7 +117,7 @@ app.get('/parcels/:id', verifyJWT, async (req, res) => {
     const result = await pool.query(
       `SELECT c.*, l.nom as livreur_nom, l.phone as livreur_phone
        FROM colis c
-       LEFT JOIN livreurs l ON c.livreur = l.id
+       LEFT JOIN livreurs l ON c.livreur::integer = l.id
        WHERE c.id = $1 AND c.enterprise_id = $2`,
       [colis_id, enterprise_id]
     );
@@ -154,7 +154,7 @@ app.get('/tracking/public/:company_code/:colis_id', async (req, res) => {
     const colisResult = await pool.query(
       `SELECT c.*, l.nom as livreur_nom, l.phone as livreur_phone
        FROM colis c
-       LEFT JOIN livreurs l ON c.livreur = l.id
+       LEFT JOIN livreurs l ON c.livreur::integer = l.id
        WHERE c.id = $1 AND c.enterprise_id = $2`,
       [colis_id, enterprise_id]
     );
@@ -607,7 +607,7 @@ app.get('/tracking/:colis_id', verifyJWT, async (req, res) => {
       `SELECT t.*, c.livreur, l.nom as livreur_nom, l.phone as livreur_phone
        FROM tracking t
        LEFT JOIN colis c ON t.colis_id = c.id
-       LEFT JOIN livreurs l ON c.livreur = l.id
+       LEFT JOIN livreurs l ON c.livreur::integer = l.id
        WHERE t.colis_id = $1 AND c.enterprise_id = $2
        ORDER BY t.created_at DESC LIMIT 1`,
       [colis_id, enterprise_id]
