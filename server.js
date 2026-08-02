@@ -22,22 +22,20 @@ app.use(express.urlencoded({ limit: '50mb', extended: true }));
 // JWT FUNCTIONS
 // ============================================
 
-// Fonction générer JWT
 const generateJWT = (id, email, type, enterprise_id) => {
   return jwt.sign(
     {
       id: id,
       email: email,
-      type: type,  // 'gestionnaire' ou 'livreur'
+      type: type,
       enterprise_id: enterprise_id,
       iat: Math.floor(Date.now() / 1000),
-      exp: Math.floor(Date.now() / 1000) + (24 * 60 * 60)  // 24h expiration
+      exp: Math.floor(Date.now() / 1000) + (24 * 60 * 60)
     },
     SECRET_KEY
   );
 };
 
-// Middleware vérifier JWT
 const verifyJWT = (req, res, next) => {
   const token = req.headers.authorization?.split(' ')[1];
   
@@ -47,12 +45,13 @@ const verifyJWT = (req, res, next) => {
 
   try {
     const decoded = jwt.verify(token, SECRET_KEY);
-    req.user = decoded;  // Stocker dans req pour utiliser dans routes
+    req.user = decoded;
     next();
   } catch (error) {
     return res.status(401).json({ error: 'Token invalide ou expiré' });
   }
 };
+
 // ============================================
 // HEALTH CHECK
 // ============================================
@@ -75,14 +74,10 @@ app.get('/health', (req, res) => {
 // COLIS ROUTES
 // ============================================
 
-// GET ALL PARCELS WITH PAGINATION
+// GET ALL PARCELS WITH PAGINATION (SÉCURISÉ)
 app.get('/parcels', verifyJWT, async (req, res) => {
   try {
-    const enterprise_id = req.query.enterprise_id;
-    if (!enterprise_id) {
-      return res.status(400).json({ error: 'enterprise_id requis' });
-    }
-
+    const enterprise_id = req.user.enterprise_id;  // ← DU JWT (SÉCURISÉ)
     const page = parseInt(req.query.page) || 1;
     const limit = 50;
     const offset = (page - 1) * limit;
@@ -106,14 +101,13 @@ app.get('/parcels', verifyJWT, async (req, res) => {
     res.status(500).json({ error: error.message });
   }
 });
-// GET ONE PARCEL
-// Route 1 : GET /parcels/:id (PROTÉGÉE - Gestionnaire/Livreur)
+
+// GET ONE PARCEL (DÉJÀ SÉCURISÉ)
 app.get('/parcels/:id', verifyJWT, async (req, res) => {
   try {
     const colis_id = req.params.id;
-    const enterprise_id = req.user.enterprise_id;
+    const enterprise_id = req.user.enterprise_id;  // ← DU JWT (SÉCURISÉ)
 
-    // Vérifier que le colis appartient à l'entreprise
     const result = await pool.query(
       `SELECT c.*, l.nom as livreur_nom, l.phone as livreur_phone
        FROM colis c
@@ -133,12 +127,11 @@ app.get('/parcels/:id', verifyJWT, async (req, res) => {
   }
 });
 
-// Route 2 : GET /tracking/public/:company_code/:colis_id (PUBLIQUE - Client)
+// ROUTE PUBLIQUE SUIVI CLIENT (SANS JWT)
 app.get('/tracking/public/:company_code/:colis_id', async (req, res) => {
   try {
     const { company_code, colis_id } = req.params;
 
-    // ✅ VÉRIFIER QUE L'ENTREPRISE EXISTE
     const entrepriseResult = await pool.query(
       'SELECT id FROM entreprises WHERE company_code = $1',
       [company_code.toUpperCase()]
@@ -150,7 +143,6 @@ app.get('/tracking/public/:company_code/:colis_id', async (req, res) => {
 
     const enterprise_id = entrepriseResult.rows[0].id;
 
-    // ✅ CHERCHER LE COLIS
     const colisResult = await pool.query(
       `SELECT c.*, l.nom as livreur_nom, l.phone as livreur_phone
        FROM colis c
@@ -171,15 +163,13 @@ app.get('/tracking/public/:company_code/:colis_id', async (req, res) => {
     res.status(500).json({ error: 'Database error' });
   }
 });
-// CREATE
+
+// CREATE PARCEL (SÉCURISÉ)
 app.post('/parcels', verifyJWT, async (req, res) => {
   try {
+    const enterprise_id = req.user.enterprise_id;  // ← DU JWT (SÉCURISÉ)
     const { de, a, prix, nom_receptionnaire, prenom_receptionnaire,
-      contact_receptionnaire, adresse_livraison, description_colis, photo_colis, status, enterprise_id } = req.body;
-
-    if (!enterprise_id) {
-      return res.status(400).json({ error: 'enterprise_id requis' });
-    }
+      contact_receptionnaire, adresse_livraison, description_colis, photo_colis, status } = req.body;
 
     const query = `
       INSERT INTO colis 
@@ -200,15 +190,14 @@ app.post('/parcels', verifyJWT, async (req, res) => {
     res.status(500).json({ error: error.message });
   }
 });
-// UPDATE PARCEL STATUS
-   app.put('/parcels/:id', verifyJWT, async (req, res) => {
+
+// UPDATE PARCEL STATUS (SÉCURISÉ)
+app.put('/parcels/:id', verifyJWT, async (req, res) => {
   try {
     const colis_id = req.params.id;
-    const { status, livreur, enterprise_id, latitude, longitude, signature } = req.body;
+    const enterprise_id = req.user.enterprise_id;  // ← DU JWT (SÉCURISÉ)
+    const { status, livreur, latitude, longitude, signature } = req.body;
     
-    if (!enterprise_id) {
-      return res.status(400).json({ error: 'enterprise_id requis' });
-    }
     if (!status) {
       return res.status(400).json({ error: 'Status manquant' });
     }
@@ -223,38 +212,32 @@ app.post('/parcels', verifyJWT, async (req, res) => {
       return res.status(403).json({ error: '❌ Accès refusé à ce colis' });
     }
 
-    // Construire la requête UPDATE dynamiquement
     let updateQuery = `UPDATE colis SET status = $1, updated_at = NOW()`;
     let params = [status];
     let paramIndex = 2;
 
-    // Ajouter livreur si fourni
     if (livreur) {
       updateQuery += `, livreur = $${paramIndex}`;
       params.push(livreur);
       paramIndex++;
     }
 
-    // Ajouter GPS si fourni
     if (latitude && longitude) {
       updateQuery += `, latitude = $${paramIndex}, longitude = $${paramIndex + 1}`;
       params.push(latitude, longitude);
       paramIndex += 2;
     }
 
-    // Ajouter signature si fournie
     if (signature) {
       updateQuery += `, signature_id = $${paramIndex}`;
       params.push(signature);
       paramIndex++;
     }
 
-    // ✅ ENREGISTRER DATE_LIVRAISON SEULEMENT SI STATUS = 'LIVRÉ'
     if (status === 'Livré') {
       updateQuery += `, date_livraison = NOW()`;
     }
 
-    // Ajouter WHERE
     updateQuery += ` WHERE id = $${paramIndex} AND enterprise_id = $${paramIndex + 1} RETURNING *`;
     params.push(colis_id, enterprise_id);
 
@@ -274,17 +257,15 @@ app.post('/parcels', verifyJWT, async (req, res) => {
     res.status(500).json({ error: error.message });
   }
 });
+
 // ============================================
 // LIVREURS ROUTES
 // ============================================
 
-// GET ALL
+// GET ALL (SÉCURISÉ)
 app.get('/livreurs', verifyJWT, async (req, res) => {
   try {
-    const enterprise_id = req.query.enterprise_id;
-    if (!enterprise_id) {
-      return res.status(400).json({ error: 'enterprise_id requis' });
-    }
+    const enterprise_id = req.user.enterprise_id;  // ← DU JWT (SÉCURISÉ)
 
     const result = await pool.query('SELECT * FROM livreurs WHERE enterprise_id = $1 ORDER BY id', [enterprise_id]);
     res.json(result.rows);
@@ -292,16 +273,17 @@ app.get('/livreurs', verifyJWT, async (req, res) => {
     res.status(500).json({ error: error.message });
   }
 });
-// CREATE
-app.post('/livreurs', verifyJWT, async (req, res) => {
-  const { nom, phone, enterprise_id } = req.body;
 
-  if (!nom || !phone || !enterprise_id) {
+// CREATE LIVREUR
+app.post('/livreurs', verifyJWT, async (req, res) => {
+  const enterprise_id = req.user.enterprise_id;  // ← DU JWT (SÉCURISÉ)
+  const { nom, phone } = req.body;
+
+  if (!nom || !phone) {
     return res.status(400).json({ error: '❌ Tous les champs sont requis' });
   }
 
   try {
-    // ✅ VÉRIFIER SI LIVREUR EXISTE DÉJÀ (PAR NOM + ENTERPRISE)
     const checkLivreur = await pool.query(
       'SELECT id FROM livreurs WHERE nom = $1 AND enterprise_id = $2',
       [nom, enterprise_id]
@@ -311,7 +293,6 @@ app.post('/livreurs', verifyJWT, async (req, res) => {
       return res.status(400).json({ error: '❌ Un livreur avec ce nom existe déjà dans cette entreprise' });
     }
 
-    // Créer le livreur (sans email/password = simple création par gestionnaire)
     const result = await pool.query(
       `INSERT INTO livreurs (nom, phone, enterprise_id, role, colis_livres, revenus, rating)
        VALUES ($1, $2, $3, 'livreur', 0, '0', '5.0')
@@ -328,9 +309,11 @@ app.post('/livreurs', verifyJWT, async (req, res) => {
     res.status(500).json({ error: 'Erreur lors de l\'ajout du livreur' });
   }
 });
+
 // ============================================
 // AUTHENTICATION ROUTES
 // ============================================
+
 app.post('/auth/register', async (req, res) => {
   const { email, password, nom_entreprise, company_code, country, phone_prefix } = req.body;
 
@@ -339,7 +322,6 @@ app.post('/auth/register', async (req, res) => {
   }
 
   try {
-    // ✅ VÉRIFIER QUE LE COMPANY_CODE N'EXISTE PAS DÉJÀ
     const checkCode = await pool.query(
       'SELECT id FROM entreprises WHERE company_code = $1',
       [company_code.toUpperCase()]
@@ -349,7 +331,6 @@ app.post('/auth/register', async (req, res) => {
       return res.status(400).json({ error: '❌ Ce code entreprise existe déjà' });
     }
 
-    // ✅ VÉRIFIER QUE L'EMAIL N'EXISTE PAS
     const checkEmail = await pool.query(
       'SELECT id FROM entreprises WHERE email = $1',
       [email]
@@ -359,10 +340,8 @@ app.post('/auth/register', async (req, res) => {
       return res.status(400).json({ error: '❌ Cet email est déjà utilisé' });
     }
 
-    // Hash password
     const hashedPassword = await bcrypt.hash(password, 10);
 
-    // Créer l'entreprise avec company_code
     const result = await pool.query(
       `INSERT INTO entreprises (email, password, nom_entreprise, company_code, country, phone_prefix, created_at, updated_at)
        VALUES ($1, $2, $3, $4, $5, $6, NOW(), NOW())
@@ -383,6 +362,7 @@ app.post('/auth/register', async (req, res) => {
     res.status(500).json({ error: 'Erreur lors de l\'inscription' });
   }
 });
+
 app.post('/auth/login', async (req, res) => {
   const { email, password } = req.body;
 
@@ -391,7 +371,6 @@ app.post('/auth/login', async (req, res) => {
   }
 
   try {
-    // Chercher l'entreprise par email
     const result = await pool.query(
       'SELECT * FROM entreprises WHERE email = $1',
       [email]
@@ -402,15 +381,12 @@ app.post('/auth/login', async (req, res) => {
     }
 
     const entreprise = result.rows[0];
-
-    // Vérifier le mot de passe
     const passwordMatch = await bcrypt.compare(password, entreprise.password);
 
     if (!passwordMatch) {
       return res.status(400).json({ error: '❌ Email ou mot de passe incorrect' });
     }
 
-    // Générer JWT
     const token = generateJWT(entreprise.id, entreprise.email, 'gestionnaire', entreprise.id);
 
     res.json({
@@ -434,6 +410,7 @@ app.post('/auth/login', async (req, res) => {
 // ============================================
 // LIVREUR AUTHENTICATION ROUTES
 // ============================================
+
 app.post('/auth/livreur/register', async (req, res) => {
   const { nom, phone, email, password, company_code } = req.body;
 
@@ -442,7 +419,6 @@ app.post('/auth/livreur/register', async (req, res) => {
   }
 
   try {
-    // ✅ CHERCHER L'ENTREPRISE PAR COMPANY_CODE
     const entrepriseResult = await pool.query(
       'SELECT id FROM entreprises WHERE company_code = $1',
       [company_code.toUpperCase()]
@@ -454,7 +430,6 @@ app.post('/auth/livreur/register', async (req, res) => {
 
     const enterprise_id = entrepriseResult.rows[0].id;
 
-    // ✅ VÉRIFIER SI LIVREUR EXISTE DÉJÀ
     const checkLivreur = await pool.query(
       'SELECT id FROM livreurs WHERE (nom = $1 AND email = $2 AND enterprise_id = $3) OR (email = $4 AND enterprise_id = $5)',
       [nom, email, enterprise_id, email, enterprise_id]
@@ -464,10 +439,8 @@ app.post('/auth/livreur/register', async (req, res) => {
       return res.status(400).json({ error: '❌ Ce livreur existe déjà pour cette entreprise' });
     }
 
-    // Hash password
     const hashedPassword = await bcrypt.hash(password, 10);
 
-    // Créer le livreur
     const result = await pool.query(
       `INSERT INTO livreurs (nom, phone, email, password, enterprise_id, role, colis_livres, revenus, rating)
        VALUES ($1, $2, $3, $4, $5, 'livreur', 0, '0', '5.0')
@@ -477,15 +450,12 @@ app.post('/auth/livreur/register', async (req, res) => {
 
     const livreur = result.rows[0];
 
-    // Récupérer les données de l'entreprise
     const entrepriseData = await pool.query(
       'SELECT id, nom_entreprise, country, phone_prefix FROM entreprises WHERE id = $1',
       [enterprise_id]
     );
 
     const entreprise = entrepriseData.rows[0];
-
-    // Générer JWT
     const token = generateJWT(livreur.id, livreur.email, 'livreur', enterprise_id);
 
     res.json({
@@ -499,6 +469,7 @@ app.post('/auth/livreur/register', async (req, res) => {
     res.status(500).json({ error: 'Erreur lors de l\'inscription' });
   }
 });
+
 app.post('/auth/livreur/login', async (req, res) => {
   const { email, password, company_code } = req.body;
 
@@ -507,7 +478,6 @@ app.post('/auth/livreur/login', async (req, res) => {
   }
 
   try {
-    // ✅ CHERCHER L'ENTREPRISE PAR COMPANY_CODE
     const entrepriseResult = await pool.query(
       'SELECT id FROM entreprises WHERE company_code = $1',
       [company_code.toUpperCase()]
@@ -519,7 +489,6 @@ app.post('/auth/livreur/login', async (req, res) => {
 
     const enterprise_id = entrepriseResult.rows[0].id;
 
-    // Chercher le livreur par email + enterprise_id
     const result = await pool.query(
       'SELECT * FROM livreurs WHERE email = $1 AND enterprise_id = $2',
       [email, enterprise_id]
@@ -530,23 +499,18 @@ app.post('/auth/livreur/login', async (req, res) => {
     }
 
     const livreur = result.rows[0];
-
-    // Vérifier le mot de passe
     const passwordMatch = await bcrypt.compare(password, livreur.password);
 
     if (!passwordMatch) {
       return res.status(400).json({ error: '❌ Email ou mot de passe incorrect' });
     }
 
-    // Récupérer les données de l'entreprise
     const entrepriseData = await pool.query(
       'SELECT id, nom_entreprise, country, phone_prefix FROM entreprises WHERE id = $1',
       [enterprise_id]
     );
 
     const entreprise = entrepriseData.rows[0];
-
-    // Générer JWT
     const token = generateJWT(livreur.id, livreur.email, 'livreur', enterprise_id);
 
     res.json({
@@ -577,11 +541,8 @@ app.post('/auth/livreur/login', async (req, res) => {
 
 app.post('/tracking', verifyJWT, async (req, res) => {
   try {
-    const { colis_id, latitude, longitude, adresse, status, enterprise_id } = req.body;
-
-    if (!enterprise_id) {
-      return res.status(400).json({ error: 'enterprise_id requis' });
-    }
+    const enterprise_id = req.user.enterprise_id;  // ← DU JWT (SÉCURISÉ)
+    const { colis_id, latitude, longitude, adresse, status } = req.body;
 
     const result = await pool.query(
       `INSERT INTO tracking (colis_id, latitude, longitude, adresse, status, enterprise_id, created_at)
@@ -597,11 +558,7 @@ app.post('/tracking', verifyJWT, async (req, res) => {
 app.get('/tracking/:colis_id', verifyJWT, async (req, res) => {
   try {
     const colis_id = req.params.colis_id;
-    const enterprise_id = req.query.enterprise_id;
-
-    if (!enterprise_id) {
-      return res.status(400).json({ error: 'enterprise_id requis' });
-    }
+    const enterprise_id = req.user.enterprise_id;  // ← DU JWT (SÉCURISÉ)
 
     const result = await pool.query(
       `SELECT t.*, c.livreur, l.nom as livreur_nom, l.phone as livreur_phone
@@ -636,6 +593,7 @@ app.get('/tracking/:colis_id', verifyJWT, async (req, res) => {
     res.status(500).json({ error: error.message });
   }
 });
+
 // ============================================
 // GET COLIS D'UN LIVREUR SPÉCIFIQUE
 // ============================================
@@ -643,11 +601,7 @@ app.get('/tracking/:colis_id', verifyJWT, async (req, res) => {
 app.get('/livreur/mes-colis/:livreur_id', verifyJWT, async (req, res) => {
   try {
     const livreur_id = req.params.livreur_id;
-    const enterprise_id = req.query.enterprise_id;
-
-    if (!enterprise_id) {
-      return res.status(400).json({ error: 'enterprise_id requis' });
-    }
+    const enterprise_id = req.user.enterprise_id;  // ← DU JWT (SÉCURISÉ)
 
     const page = parseInt(req.query.page) || 1;
     const limit = 50;
@@ -685,12 +639,13 @@ app.get('/livreur/mes-colis/:livreur_id', verifyJWT, async (req, res) => {
     res.status(500).json({ error: error.message });
   }
 });
+
 // ============================================
 // EXPORT
 // ============================================
 
 module.exports = app;
-// Écouter sur un port
+
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
