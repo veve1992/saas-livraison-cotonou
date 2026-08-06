@@ -7,6 +7,10 @@ const bcrypt = require('bcrypt');
 const SECRET_KEY = process.env.SECRET_KEY || 'your-super-secret-key-change-in-production';
 
 const app = express();
+// Configuration FedaPay
+import { FedaPay } from 'fedapay';
+
+FedaPay.setApiKey(process.env.FEDAPAY_SECRET_KEY);
 
 // Database
 const pool = new Pool({
