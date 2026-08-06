@@ -645,13 +645,78 @@ app.get('/livreur/mes-colis/:livreur_id', verifyJWT, async (req, res) => {
   }
 });
 
+const PORT = process.env.PORT || 3000;
+// ====================================
+// ROUTE PAIEMENT FEDAPAY
+// ====================================
+app.post('/api/payment', verifyJWT, async (req, res) => {
+  try {
+    const { plan, amount, currency } = req.body;
+    const enterprise_id = req.user.enterprise_id;
+
+    // Créer transaction FedaPay
+    const transaction = await FedaPay.Transaction.create({
+      description: `Abonnement ${plan} - DeliverHub`,
+      amount: amount, // En cents
+      currency: currency || 'XOF',
+      customer: {
+        firstname: req.user.email?.split('@')[0] || 'Client',
+        email: req.user.email,
+        phone: ''
+      },
+      metadata: {
+        enterprise_id: enterprise_id,
+        plan: plan,
+        type: 'subscription'
+      }
+    });
+
+    // Générer link de paiement
+    const paymentLink = await transaction.generateLink();
+
+    res.json({
+      success: true,
+      transaction_id: transaction.id,
+      payment_link: paymentLink
+    });
+  } catch (error) {
+    console.error('Erreur paiement:', error);
+    res.status(500).json({
+      error: 'Erreur lors de la création du paiement',
+      details: error.message
+    });
+  }
+});
+
+// ====================================
+// VÉRIFIER PAIEMENT (pour webhook FedaPay)
+// ====================================
+app.post('/webhook/fedapay', express.raw({type: 'application/json'}), async (req, res) => {
+  try {
+    const event = req.body;
+
+    if (event.type === 'transaction.success') {
+      const transactionId = event.data.id;
+      const metadata = event.data.metadata;
+
+      // Mettre à jour abonnement en base de données
+      // (À implémenter selon ta table)
+      console.log(`✅ Paiement confirmé pour entreprise: ${metadata.enterprise_id}, plan: ${metadata.plan}`);
+    }
+
+    res.json({ received: true });
+  } catch (error) {
+    console.error('Erreur webhook:', error);
+    res.status(400).json({ error: error.message });
+  }
+});
+
+app.listen(PORT, () => {
+  console.log(`✅ Backend en ligne : http://localhost:${PORT}`);
+});
+
 // ============================================
 // EXPORT
 // ============================================
 
 export default app;
-
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
-});
