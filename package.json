@@ -1,4 +1,5 @@
 {
+  "type": "module",
   "name": "saas-livraison-cotonou",
   "version": "1.0.0",
   "description": "Plateforme de livraison de colis - Cotonou, Bénin",

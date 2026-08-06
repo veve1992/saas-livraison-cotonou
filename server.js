@@ -1,15 +1,16 @@
-const express = require('express');
-const { Pool } = require('pg');
-const cors = require('cors');
-require('dotenv').config();
-const jwt = require('jsonwebtoken');
-const bcrypt = require('bcrypt');
+import express from 'express';
+import pkg from 'pg';
+import cors from 'cors';
+import dotenv from 'dotenv';
+dotenv.config();
+import jwt from 'jsonwebtoken';
+import bcrypt from 'bcrypt';
+import { FedaPay } from 'fedapay';
+const { Pool } = pkg;
 const SECRET_KEY = process.env.SECRET_KEY || 'your-super-secret-key-change-in-production';
 
 const app = express();
 // Configuration FedaPay
-import { FedaPay } from 'fedapay';
-
 FedaPay.setApiKey(process.env.FEDAPAY_SECRET_KEY);
 
 // Database
@@ -648,7 +649,7 @@ app.get('/livreur/mes-colis/:livreur_id', verifyJWT, async (req, res) => {
 // EXPORT
 // ============================================
 
-module.exports = app;
+export default app;
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
