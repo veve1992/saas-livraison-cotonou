@@ -654,16 +654,12 @@ app.post('/api/payment', verifyJWT, async (req, res) => {
     const { plan, amount, currency } = req.body;
     const enterprise_id = req.user.enterprise_id;
 
-    // Créer transaction FedaPay
+    // Créer une transaction FedaPay
     const transaction = await FedaPay.Transaction.create({
       description: `Abonnement ${plan} - DeliverHub`,
       amount: amount, // En cents
       currency: currency || 'XOF',
-      customer: {
-        firstname: req.user.email?.split('@')[0] || 'Client',
-        email: req.user.email,
-        phone: ''
-      },
+      customer_email: req.user.email,
       metadata: {
         enterprise_id: enterprise_id,
         plan: plan,
@@ -671,18 +667,39 @@ app.post('/api/payment', verifyJWT, async (req, res) => {
       }
     });
 
-    // Générer link de paiement
-    const paymentLink = await transaction.generateLink();
+    // Générer le lien de paiement
+    // FedaPay retourne un authorize_url dans la réponse
+    const paymentLink = transaction.authorize_url || `https://app.fedapay.com/checkout/${transaction.token}`;
 
     res.json({
       success: true,
       transaction_id: transaction.id,
-      payment_link: paymentLink
+      payment_link: paymentLink,
+      token: transaction.token
     });
   } catch (error) {
-    console.error('Erreur paiement:', error);
+    console.error('❌ Erreur FedaPay:', error);
     res.status(500).json({
       error: 'Erreur lors de la création du paiement',
+      details: error.message
+    });
+  }
+});
+// ====================================
+// ROUTE DE TEST FEDAPAY
+// ====================================
+app.get('/api/test-fedapay', verifyJWT, async (req, res) => {
+  try {
+    const transactions = await FedaPay.Transaction.all();
+    res.json({
+      success: true,
+      message: 'FedaPay API OK',
+      transactionCount: transactions.length
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: 'FedaPay API Error',
       details: error.message
     });
   }
