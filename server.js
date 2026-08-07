@@ -10,9 +10,11 @@ const { Pool } = pkg;
 const SECRET_KEY = process.env.SECRET_KEY || 'your-super-secret-key-change-in-production';
 
 const app = express();
-// Configuration FedaPay
-FedaPay.setApiKey(process.env.FEDAPAY_SECRET_KEY);
-
+// Configuration FedaPay - initialiser avec clé
+const fedapay = new FedaPay({
+  apiKey: process.env.FEDAPAY_SECRET_KEY,
+  environment: 'production'
+});
 // Database
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL
@@ -654,10 +656,12 @@ app.post('/api/payment', verifyJWT, async (req, res) => {
     const { plan, amount, currency } = req.body;
     const enterprise_id = req.user.enterprise_id;
 
+    console.log('💳 Création transaction FedaPay:', { plan, amount, currency });
+
     // Créer une transaction FedaPay
-    const transaction = await FedaPay.Transaction.create({
+    const transaction = await fedapay.transaction.create({
       description: `Abonnement ${plan} - DeliverHub`,
-      amount: amount, // En cents
+      amount: amount,
       currency: currency || 'XOF',
       customer_email: req.user.email,
       metadata: {
@@ -667,8 +671,9 @@ app.post('/api/payment', verifyJWT, async (req, res) => {
       }
     });
 
+    console.log('✅ Transaction créée:', transaction.id);
+
     // Générer le lien de paiement
-    // FedaPay retourne un authorize_url dans la réponse
     const paymentLink = transaction.authorize_url || `https://app.fedapay.com/checkout/${transaction.token}`;
 
     res.json({
@@ -685,7 +690,6 @@ app.post('/api/payment', verifyJWT, async (req, res) => {
     });
   }
 });
-
 // ====================================
 // ROUTE DE TEST FEDAPAY (PUBLIQUE - SANS JWT)
 // ====================================
