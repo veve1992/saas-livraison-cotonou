@@ -5,379 +5,96 @@ import dotenv from 'dotenv';
 dotenv.config();
 import jwt from 'jsonwebtoken';
 import bcrypt from 'bcrypt';
-import FedaPay from 'fedapay';
-const { Pool } = pkg;
-const SECRET_KEY = process.env.SECRET_KEY || 'your-super-secret-key-change-in-production';
 
+// ====================================
+// CONFIGURATION
+// ====================================
+const { Pool } = pkg;
+
+const SECRET_KEY = process.env.SECRET_KEY || 'your-super-secret-key-change-in-production';
 const app = express();
-// Configuration FedaPay - initialiser avec clé
-const fedapay = new FedaPay({
-  apiKey: process.env.FEDAPAY_SECRET_KEY,
-  environment: 'production'
-});
-// Database
+
+// ====================================
+// DATABASE
+// ====================================
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL
 });
 
-// Middleware
+// ====================================
+// MIDDLEWARE
+// ====================================
+app.use(express.json());
 app.use(cors());
-app.use(express.json({ limit: '50mb' }));
-app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
-// ============================================
-// JWT FUNCTIONS
-// ============================================
-
-const generateJWT = (id, email, type, enterprise_id) => {
-  return jwt.sign(
-    {
-      id: id,
-      email: email,
-      type: type,
-      enterprise_id: enterprise_id,
-      iat: Math.floor(Date.now() / 1000),
-      exp: Math.floor(Date.now() / 1000) + (24 * 60 * 60)
-    },
-    SECRET_KEY
-  );
-};
-
+// ====================================
+// VERIFY JWT
+// ====================================
 const verifyJWT = (req, res, next) => {
-  const token = req.headers.authorization?.split(' ')[1];
+  const token = req.headers['authorization']?.split(' ')[1];
+  if (!token) return res.status(401).json({ error: 'Token manquant' });
   
-  if (!token) {
-    return res.status(401).json({ error: 'Token manquant' });
-  }
-
-  try {
-    const decoded = jwt.verify(token, SECRET_KEY);
-    req.user = decoded;
+  jwt.verify(token, SECRET_KEY, (err, user) => {
+    if (err) return res.status(401).json({ error: 'Token invalide' });
+    req.user = user;
     next();
-  } catch (error) {
-    return res.status(401).json({ error: 'Token invalide ou expiré' });
-  }
+  });
 };
 
-// ============================================
-// HEALTH CHECK
-// ============================================
-
-app.get('/', (req, res) => {
-  res.json({ 
-    status: '✅ OK',
-    message: 'Serveur fonctionne !'
-  });
-});
-
+// ====================================
+// ROUTES SANTÉ
+// ====================================
 app.get('/health', (req, res) => {
-  res.json({ 
-    status: '✅ OK',
-    message: 'Serveur fonctionne !'
-  });
+  res.json({ status: '✅ Backend en ligne' });
 });
 
-// ============================================
-// COLIS ROUTES
-// ============================================
-
-// GET ALL PARCELS WITH PAGINATION (SÉCURISÉ)
-app.get('/parcels', verifyJWT, async (req, res) => {
+// ====================================
+// ROUTE INSCRIPTION GESTIONNAIRE
+// ====================================
+app.post('/register-gestionnaire', async (req, res) => {
   try {
-    const enterprise_id = req.user.enterprise_id;  // ← DU JWT (SÉCURISÉ)
-    const page = parseInt(req.query.page) || 1;
-    const limit = 50;
-    const offset = (page - 1) * limit;
-
-    const countResult = await pool.query('SELECT COUNT(*) FROM colis WHERE enterprise_id = $1', [enterprise_id]);
-    const total = parseInt(countResult.rows[0].count);
-
-    const result = await pool.query(
-      'SELECT * FROM colis WHERE enterprise_id = $1 ORDER BY id DESC LIMIT $2 OFFSET $3',
-      [enterprise_id, limit, offset]
-    );
-
-    res.json({
-      data: result.rows,
-      page: page,
-      limit: limit,
-      total: total,
-      pages: Math.ceil(total / limit)
-    });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
-
-// GET ONE PARCEL (DÉJÀ SÉCURISÉ)
-app.get('/parcels/:id', verifyJWT, async (req, res) => {
-  try {
-    const colis_id = req.params.id;
-    const enterprise_id = req.user.enterprise_id;  // ← DU JWT (SÉCURISÉ)
-
-    const result = await pool.query(
-      `SELECT c.*, l.nom as livreur_nom, l.phone as livreur_phone
-       FROM colis c
-       LEFT JOIN livreurs l ON c.livreur::integer = l.id
-       WHERE c.id = $1 AND c.enterprise_id = $2`,
-      [colis_id, enterprise_id]
-    );
-
-    if (result.rows.length === 0) {
-      return res.status(404).json({ error: 'Colis non trouvé' });
-    }
-
-    res.json(result.rows[0]);
-  } catch (e) {
-    console.error('Erreur:', e);
-    res.status(500).json({ error: 'Database error' });
-  }
-});
-
-// ROUTE PUBLIQUE SUIVI CLIENT (SANS JWT)
-app.get('/tracking/public/:company_code/:colis_id', async (req, res) => {
-  try {
-    const { company_code, colis_id } = req.params;
-
-    const entrepriseResult = await pool.query(
-      'SELECT id FROM entreprises WHERE company_code = $1',
-      [company_code.toUpperCase()]
-    );
-
-    if (entrepriseResult.rows.length === 0) {
-      return res.status(403).json({ error: 'Entreprise non trouvée' });
-    }
-
-    const enterprise_id = entrepriseResult.rows[0].id;
-
-    const colisResult = await pool.query(
-      `SELECT c.*, l.nom as livreur_nom, l.phone as livreur_phone
-       FROM colis c
-       LEFT JOIN livreurs l ON c.livreur::integer = l.id
-       WHERE c.id = $1 AND c.enterprise_id = $2`,
-      [colis_id, enterprise_id]
-    );
-
-    if (colisResult.rows.length === 0) {
-      return res.status(404).json({ error: 'Colis non trouvé ou accès refusé' });
-    }
-
-    res.json({
-      colis: colisResult.rows[0]
-    });
-  } catch (e) {
-    console.error('Erreur:', e);
-    res.status(500).json({ error: 'Database error' });
-  }
-});
-
-// CREATE PARCEL (SÉCURISÉ)
-app.post('/parcels', verifyJWT, async (req, res) => {
-  try {
-    const enterprise_id = req.user.enterprise_id;  // ← DU JWT (SÉCURISÉ)
-    const { de, a, prix, nom_receptionnaire, prenom_receptionnaire,
-      contact_receptionnaire, adresse_livraison, description_colis, photo_colis, status } = req.body;
-
-    const query = `
-      INSERT INTO colis 
-      (de, a, prix, nom_receptionnaire, prenom_receptionnaire, contact_receptionnaire, 
-       adresse_livraison, description_colis, photo_colis, status, enterprise_id, created_at, updated_at)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW(), NOW())
-      RETURNING *
-    `;
-
-    const values = [de, a, prix, nom_receptionnaire || '', prenom_receptionnaire || '',
-      contact_receptionnaire || '', adresse_livraison || '', description_colis || '',
-      photo_colis || '', status || 'En attente', enterprise_id];
-
-    const result = await pool.query(query, values);
-    res.json({ success: true, colis: result.rows[0] });
-  } catch (error) {
-    console.error('Erreur:', error);
-    res.status(500).json({ error: error.message });
-  }
-});
-
-// UPDATE PARCEL STATUS (SÉCURISÉ)
-app.put('/parcels/:id', verifyJWT, async (req, res) => {
-  try {
-    const colis_id = req.params.id;
-    const enterprise_id = req.user.enterprise_id;  // ← DU JWT (SÉCURISÉ)
-    const { status, livreur, latitude, longitude, signature } = req.body;
+    const { email, password, nom_entreprise, company_code, country, phone_prefix } = req.body;
     
-    if (!status) {
-      return res.status(400).json({ error: 'Status manquant' });
-    }
-
-    // Vérifier que le colis appartient à l'entreprise
-    const checkColis = await pool.query(
-      'SELECT * FROM colis WHERE id = $1 AND enterprise_id = $2',
-      [colis_id, enterprise_id]
-    );
-
-    if (checkColis.rows.length === 0) {
-      return res.status(403).json({ error: '❌ Accès refusé à ce colis' });
-    }
-
-    let updateQuery = `UPDATE colis SET status = $1, updated_at = NOW()`;
-    let params = [status];
-    let paramIndex = 2;
-
-    if (livreur) {
-      updateQuery += `, livreur = $${paramIndex}`;
-      params.push(livreur);
-      paramIndex++;
-    }
-
-    if (latitude && longitude) {
-      updateQuery += `, latitude = $${paramIndex}, longitude = $${paramIndex + 1}`;
-      params.push(latitude, longitude);
-      paramIndex += 2;
-    }
-
-    if (signature) {
-      updateQuery += `, signature_id = $${paramIndex}`;
-      params.push(signature);
-      paramIndex++;
-    }
-
-    if (status === 'Livré') {
-      updateQuery += `, date_livraison = NOW()`;
-    }
-
-    updateQuery += ` WHERE id = $${paramIndex} AND enterprise_id = $${paramIndex + 1} RETURNING *`;
-    params.push(colis_id, enterprise_id);
-
-    const result = await pool.query(updateQuery, params);
-
-    if (result.rows.length === 0) {
-      return res.status(404).json({ error: 'Colis non trouvé' });
-    }
-
-    res.json({
-      success: true,
-      message: '✅ Colis mis à jour',
-      colis: result.rows[0]
-    });
-  } catch (error) {
-    console.error('Erreur UPDATE:', error);
-    res.status(500).json({ error: error.message });
-  }
-});
-
-// ============================================
-// LIVREURS ROUTES
-// ============================================
-
-// GET ALL (SÉCURISÉ)
-app.get('/livreurs', verifyJWT, async (req, res) => {
-  try {
-    const enterprise_id = req.user.enterprise_id;  // ← DU JWT (SÉCURISÉ)
-
-    const result = await pool.query('SELECT * FROM livreurs WHERE enterprise_id = $1 ORDER BY id', [enterprise_id]);
-    res.json(result.rows);
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
-
-// CREATE LIVREUR
-app.post('/livreurs', verifyJWT, async (req, res) => {
-  const enterprise_id = req.user.enterprise_id;  // ← DU JWT (SÉCURISÉ)
-  const { nom, phone } = req.body;
-
-  if (!nom || !phone) {
-    return res.status(400).json({ error: '❌ Tous les champs sont requis' });
-  }
-
-  try {
-    const checkLivreur = await pool.query(
-      'SELECT id FROM livreurs WHERE nom = $1 AND enterprise_id = $2',
-      [nom, enterprise_id]
-    );
-
-    if (checkLivreur.rows.length > 0) {
-      return res.status(400).json({ error: '❌ Un livreur avec ce nom existe déjà dans cette entreprise' });
-    }
-
-    const result = await pool.query(
-      `INSERT INTO livreurs (nom, phone, enterprise_id, role, colis_livres, revenus, rating)
-       VALUES ($1, $2, $3, 'livreur', 0, '0', '5.0')
-       RETURNING id, nom, phone, enterprise_id, role`,
-      [nom, phone, enterprise_id]
-    );
-
-    res.json({
-      message: '✅ Livreur ajouté avec succès',
-      livreur: result.rows[0]
-    });
-  } catch (error) {
-    console.error('Erreur:', error);
-    res.status(500).json({ error: 'Erreur lors de l\'ajout du livreur' });
-  }
-});
-
-// ============================================
-// AUTHENTICATION ROUTES
-// ============================================
-
-app.post('/auth/register', async (req, res) => {
-  const { email, password, nom_entreprise, company_code, country, phone_prefix } = req.body;
-
-  if (!email || !password || !nom_entreprise || !company_code || !country) {
-    return res.status(400).json({ error: '❌ Tous les champs sont requis' });
-  }
-
-  try {
-    const checkCode = await pool.query(
-      'SELECT id FROM entreprises WHERE company_code = $1',
-      [company_code.toUpperCase()]
-    );
-
-    if (checkCode.rows.length > 0) {
-      return res.status(400).json({ error: '❌ Ce code entreprise existe déjà' });
-    }
-
-    const checkEmail = await pool.query(
-      'SELECT id FROM entreprises WHERE email = $1',
-      [email]
-    );
-
-    if (checkEmail.rows.length > 0) {
-      return res.status(400).json({ error: '❌ Cet email est déjà utilisé' });
+    if (!email || !password || !nom_entreprise || !company_code) {
+      return res.status(400).json({ error: 'Champs manquants' });
     }
 
     const hashedPassword = await bcrypt.hash(password, 10);
-
+    
     const result = await pool.query(
-      `INSERT INTO entreprises (email, password, nom_entreprise, company_code, country, phone_prefix, created_at, updated_at)
-       VALUES ($1, $2, $3, $4, $5, $6, NOW(), NOW())
-       RETURNING id, email, nom_entreprise, company_code, country, phone_prefix`,
-      [email, hashedPassword, nom_entreprise, company_code.toUpperCase(), country, phone_prefix]
+      'INSERT INTO entreprises (email, password, nom_entreprise, company_code, country, phone_prefix, plan) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id, email, nom_entreprise, company_code',
+      [email, hashedPassword, nom_entreprise, company_code, country || 'BJ', phone_prefix || '+229', 'startup']
     );
 
-    const entreprise = result.rows[0];
-    const token = generateJWT(entreprise.id, entreprise.email, 'gestionnaire', entreprise.id);
+    const token = jwt.sign({ 
+      id: result.rows[0].id, 
+      email: result.rows[0].email,
+      enterprise_id: result.rows[0].id
+    }, SECRET_KEY, { expiresIn: '24h' });
 
     res.json({
-      message: '✅ Entreprise inscrite avec succès',
-      entreprise,
-      token
+      success: true,
+      message: '✅ Inscription réussie',
+      token,
+      entreprise: result.rows[0]
     });
   } catch (error) {
-    console.error('Erreur:', error);
-    res.status(500).json({ error: 'Erreur lors de l\'inscription' });
+    console.error('Erreur inscription:', error);
+    res.status(500).json({ error: error.message });
   }
 });
 
-app.post('/auth/login', async (req, res) => {
-  const { email, password } = req.body;
-
-  if (!email || !password) {
-    return res.status(400).json({ error: '❌ Email et mot de passe requis' });
-  }
-
+// ====================================
+// ROUTE LOGIN GESTIONNAIRE
+// ====================================
+app.post('/login-gestionnaire', async (req, res) => {
   try {
+    const { email, password } = req.body;
+    
+    if (!email || !password) {
+      return res.status(400).json({ error: 'Email et mot de passe requis' });
+    }
+
     const result = await pool.query(
       'SELECT * FROM entreprises WHERE email = $1',
       [email]
@@ -394,10 +111,15 @@ app.post('/auth/login', async (req, res) => {
       return res.status(400).json({ error: '❌ Email ou mot de passe incorrect' });
     }
 
-    const token = generateJWT(entreprise.id, entreprise.email, 'gestionnaire', entreprise.id);
+    const token = jwt.sign({ 
+      id: entreprise.id, 
+      email: entreprise.email,
+      enterprise_id: entreprise.id
+    }, SECRET_KEY, { expiresIn: '24h' });
 
     res.json({
-      message: '✅ Connexion réussie',
+      success: true,
+      token,
       entreprise: {
         id: entreprise.id,
         email: entreprise.email,
@@ -405,100 +127,74 @@ app.post('/auth/login', async (req, res) => {
         company_code: entreprise.company_code,
         country: entreprise.country,
         phone_prefix: entreprise.phone_prefix
-      },
-      token
+      }
     });
   } catch (error) {
-    console.error('Erreur:', error);
-    res.status(500).json({ error: 'Erreur lors de la connexion' });
+    console.error('Erreur login:', error);
+    res.status(500).json({ error: error.message });
   }
 });
 
-// ============================================
-// LIVREUR AUTHENTICATION ROUTES
-// ============================================
-
-app.post('/auth/livreur/register', async (req, res) => {
-  const { nom, phone, email, password, company_code } = req.body;
-
-  if (!nom || !phone || !email || !password || !company_code) {
-    return res.status(400).json({ error: '❌ Tous les champs sont requis' });
-  }
-
+// ====================================
+// ROUTE INSCRIPTION LIVREUR
+// ====================================
+app.post('/register-livreur', async (req, res) => {
   try {
+    const { email, password, nom, phone, company_code } = req.body;
+    
+    if (!email || !password || !nom || !phone || !company_code) {
+      return res.status(400).json({ error: 'Champs manquants' });
+    }
+
     const entrepriseResult = await pool.query(
       'SELECT id FROM entreprises WHERE company_code = $1',
-      [company_code.toUpperCase()]
+      [company_code]
     );
 
     if (entrepriseResult.rows.length === 0) {
-      return res.status(400).json({ error: '❌ Code entreprise invalide' });
+      return res.status(400).json({ error: 'Code entreprise invalide' });
     }
 
     const enterprise_id = entrepriseResult.rows[0].id;
-
-    const checkLivreur = await pool.query(
-      'SELECT id FROM livreurs WHERE (nom = $1 AND email = $2 AND enterprise_id = $3) OR (email = $4 AND enterprise_id = $5)',
-      [nom, email, enterprise_id, email, enterprise_id]
-    );
-
-    if (checkLivreur.rows.length > 0) {
-      return res.status(400).json({ error: '❌ Ce livreur existe déjà pour cette entreprise' });
-    }
-
     const hashedPassword = await bcrypt.hash(password, 10);
 
     const result = await pool.query(
-      `INSERT INTO livreurs (nom, phone, email, password, enterprise_id, role, colis_livres, revenus, rating)
-       VALUES ($1, $2, $3, $4, $5, 'livreur', 0, '0', '5.0')
-       RETURNING id, nom, phone, email, enterprise_id`,
-      [nom, phone, email, hashedPassword, enterprise_id]
+      'INSERT INTO livreurs (email, password, nom, phone, enterprise_id, role) VALUES ($1, $2, $3, $4, $5, $6) RETURNING *',
+      [email, hashedPassword, nom, phone, enterprise_id, 'livreur']
     );
 
-    const livreur = result.rows[0];
-
-    const entrepriseData = await pool.query(
-      'SELECT id, nom_entreprise, country, phone_prefix FROM entreprises WHERE id = $1',
-      [enterprise_id]
-    );
-
-    const entreprise = entrepriseData.rows[0];
-    const token = generateJWT(livreur.id, livreur.email, 'livreur', enterprise_id);
+    const token = jwt.sign({ 
+      id: result.rows[0].id, 
+      email: result.rows[0].email,
+      enterprise_id: enterprise_id
+    }, SECRET_KEY, { expiresIn: '24h' });
 
     res.json({
-      message: '✅ Livreur inscrit avec succès',
-      livreur,
-      entreprise,
-      token
+      success: true,
+      message: '✅ Inscription livreur réussie',
+      token,
+      livreur: result.rows[0]
     });
   } catch (error) {
-    console.error('Erreur:', error);
-    res.status(500).json({ error: 'Erreur lors de l\'inscription' });
+    console.error('Erreur inscription livreur:', error);
+    res.status(500).json({ error: error.message });
   }
 });
 
-app.post('/auth/livreur/login', async (req, res) => {
-  const { email, password, company_code } = req.body;
-
-  if (!email || !password || !company_code) {
-    return res.status(400).json({ error: '❌ Email, mot de passe et code entreprise requis' });
-  }
-
+// ====================================
+// ROUTE LOGIN LIVREUR
+// ====================================
+app.post('/login-livreur', async (req, res) => {
   try {
-    const entrepriseResult = await pool.query(
-      'SELECT id FROM entreprises WHERE company_code = $1',
-      [company_code.toUpperCase()]
-    );
-
-    if (entrepriseResult.rows.length === 0) {
-      return res.status(400).json({ error: '❌ Code entreprise invalide' });
+    const { email, password } = req.body;
+    
+    if (!email || !password) {
+      return res.status(400).json({ error: 'Email et mot de passe requis' });
     }
 
-    const enterprise_id = entrepriseResult.rows[0].id;
-
     const result = await pool.query(
-      'SELECT * FROM livreurs WHERE email = $1 AND enterprise_id = $2',
-      [email, enterprise_id]
+      'SELECT * FROM livreurs WHERE email = $1',
+      [email]
     );
 
     if (result.rows.length === 0) {
@@ -512,221 +208,221 @@ app.post('/auth/livreur/login', async (req, res) => {
       return res.status(400).json({ error: '❌ Email ou mot de passe incorrect' });
     }
 
-    const entrepriseData = await pool.query(
-      'SELECT id, nom_entreprise, country, phone_prefix FROM entreprises WHERE id = $1',
-      [enterprise_id]
+    const token = jwt.sign({ 
+      id: livreur.id, 
+      email: livreur.email,
+      enterprise_id: livreur.enterprise_id
+    }, SECRET_KEY, { expiresIn: '24h' });
+
+    const entrepriseResult = await pool.query(
+      'SELECT * FROM entreprises WHERE id = $1',
+      [livreur.enterprise_id]
     );
 
-    const entreprise = entrepriseData.rows[0];
-    const token = generateJWT(livreur.id, livreur.email, 'livreur', enterprise_id);
-
     res.json({
-      message: '✅ Connexion réussie',
+      success: true,
+      token,
       livreur: {
         id: livreur.id,
         nom: livreur.nom,
         phone: livreur.phone,
-        email: livreur.email,
-        enterprise_id: livreur.enterprise_id,
-        role: livreur.role,
-        colis_livres: livreur.colis_livres,
-        revenus: livreur.revenus,
-        rating: livreur.rating
+        email: livreur.email
       },
-      entreprise,
-      token
+      entreprise: entrepriseResult.rows[0]
     });
   } catch (error) {
-    console.error('Erreur:', error);
-    res.status(500).json({ error: 'Erreur lors de la connexion' });
+    console.error('Erreur login livreur:', error);
+    res.status(500).json({ error: error.message });
   }
 });
 
-// ============================================
-// TRACKING ROUTES
-// ============================================
-
-app.post('/tracking', verifyJWT, async (req, res) => {
+// ====================================
+// ROUTES COLIS
+// ====================================
+app.post('/parcels', verifyJWT, async (req, res) => {
   try {
-    const enterprise_id = req.user.enterprise_id;  // ← DU JWT (SÉCURISÉ)
-    const { colis_id, latitude, longitude, adresse, status } = req.body;
+    const { de, a, prix, enterprise_id, nom_receptionnaire, prenom_receptionnaire, contact_receptionnaire, adresse_livraison, description_colis, photo_colis, status } = req.body;
+    
+    if (!de || !a || !prix || !enterprise_id) {
+      return res.status(400).json({ error: 'Champs requis manquants' });
+    }
 
     const result = await pool.query(
-      `INSERT INTO tracking (colis_id, latitude, longitude, adresse, status, enterprise_id, created_at)
-       VALUES ($1, $2, $3, $4, $5, $6, NOW()) RETURNING *`,
-      [colis_id, latitude, longitude, adresse, status, enterprise_id]
+      'INSERT INTO colis (de, a, prix, enterprise_id, nom_receptionnaire, prenom_receptionnaire, contact_receptionnaire, adresse_livraison, description_colis, photo_colis, status) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING *',
+      [de, a, prix, enterprise_id, nom_receptionnaire, prenom_receptionnaire, contact_receptionnaire, adresse_livraison, description_colis, photo_colis, status || 'En attente']
     );
-    res.json({ success: true, tracking: result.rows[0] });
+
+    res.json({ success: true, parcel: result.rows[0] });
   } catch (error) {
+    console.error('Erreur création colis:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.get('/parcels', verifyJWT, async (req, res) => {
+  try {
+    const { page = 1, enterprise_id } = req.query;
+    const limit = 10;
+    const offset = (page - 1) * limit;
+
+    if (!enterprise_id) {
+      return res.status(400).json({ error: 'enterprise_id requis' });
+    }
+
+    const result = await pool.query(
+      'SELECT * FROM colis WHERE enterprise_id = $1 ORDER BY created_at DESC LIMIT $2 OFFSET $3',
+      [enterprise_id, limit, offset]
+    );
+
+    const countResult = await pool.query(
+      'SELECT COUNT(*) as total FROM colis WHERE enterprise_id = $1',
+      [enterprise_id]
+    );
+
+    const total = parseInt(countResult.rows[0].total);
+    const pages = Math.ceil(total / limit);
+
+    res.json({
+      data: result.rows,
+      page: parseInt(page),
+      pages,
+      total
+    });
+  } catch (error) {
+    console.error('Erreur récupération colis:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ====================================
+// ROUTES LIVREURS
+// ====================================
+app.get('/livreurs', verifyJWT, async (req, res) => {
+  try {
+    const { enterprise_id } = req.query;
+
+    if (!enterprise_id) {
+      return res.status(400).json({ error: 'enterprise_id requis' });
+    }
+
+    const result = await pool.query(
+      'SELECT * FROM livreurs WHERE enterprise_id = $1',
+      [enterprise_id]
+    );
+
+    res.json(result.rows);
+  } catch (error) {
+    console.error('Erreur récupération livreurs:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ====================================
+// ROUTE TRACKING PUBLIC
+// ====================================
+app.get('/tracking/public/:company_code/:colis_id', async (req, res) => {
+  try {
+    const { company_code, colis_id } = req.params;
+
+    const entrepriseResult = await pool.query(
+      'SELECT id FROM entreprises WHERE company_code = $1',
+      [company_code]
+    );
+
+    if (entrepriseResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Entreprise non trouvée' });
+    }
+
+    const enterprise_id = entrepriseResult.rows[0].id;
+
+    const result = await pool.query(
+      'SELECT c.*, l.nom as livreur_nom, l.phone as livreur_phone FROM colis c LEFT JOIN livreurs l ON c.livreur::integer = l.id WHERE c.id = $1 AND c.enterprise_id = $2',
+      [colis_id, enterprise_id]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Colis non trouvé' });
+    }
+
+    res.json(result.rows[0]);
+  } catch (error) {
+    console.error('Erreur tracking:', error);
     res.status(500).json({ error: error.message });
   }
 });
 
 app.get('/tracking/:colis_id', verifyJWT, async (req, res) => {
   try {
-    const colis_id = req.params.colis_id;
-    const enterprise_id = req.user.enterprise_id;  // ← DU JWT (SÉCURISÉ)
+    const { colis_id } = req.params;
+    const enterprise_id = req.user.enterprise_id;
 
     const result = await pool.query(
-      `SELECT t.*, c.livreur, l.nom as livreur_nom, l.phone as livreur_phone
-       FROM tracking t
-       LEFT JOIN colis c ON t.colis_id = c.id
-       LEFT JOIN livreurs l ON c.livreur::integer = l.id
-       WHERE t.colis_id = $1 AND c.enterprise_id = $2
-       ORDER BY t.created_at DESC LIMIT 1`,
+      'SELECT * FROM tracking WHERE colis_id = $1 AND enterprise_id = $2 ORDER BY created_at DESC LIMIT 1',
       [colis_id, enterprise_id]
     );
 
     if (result.rows.length === 0) {
-      return res.json({ 
-        message: 'Aucune position enregistrée encore',
-        latitude: null,
-        longitude: null
-      });
+      return res.json({ message: 'Aucune position enregistrée' });
     }
 
-    const position = result.rows[0];
-    res.json({
-      latitude: position.latitude,
-      longitude: position.longitude,
-      adresse: position.adresse,
-      status: position.status,
-      livreur_nom: position.livreur_nom || 'N/A',
-      livreur_phone: position.livreur_phone || 'N/A',
-      timestamp: position.created_at
-    });
+    res.json(result.rows[0]);
   } catch (error) {
-    console.error('Erreur get tracking:', error);
+    console.error('Erreur tracking:', error);
     res.status(500).json({ error: error.message });
   }
 });
 
-// ============================================
-// GET COLIS D'UN LIVREUR SPÉCIFIQUE
-// ============================================
-
-app.get('/livreur/mes-colis/:livreur_id', verifyJWT, async (req, res) => {
-  try {
-    const livreur_id = req.params.livreur_id;
-    const enterprise_id = req.user.enterprise_id;  // ← DU JWT (SÉCURISÉ)
-
-    const page = parseInt(req.query.page) || 1;
-    const limit = 50;
-    const offset = (page - 1) * limit;
-
-    // Vérifier que le livreur appartient à cette entreprise
-    const livreurCheck = await pool.query(
-      'SELECT id FROM livreurs WHERE id = $1 AND enterprise_id = $2',
-      [livreur_id, enterprise_id]
-    );
-    if (livreurCheck.rows.length === 0) {
-      return res.status(403).json({ error: 'Accès refusé' });
-    }
-
-    // Récupérer les colis du livreur
-    const countResult = await pool.query(
-      'SELECT COUNT(*) FROM colis WHERE livreur = $1 AND enterprise_id = $2',
-      [livreur_id, enterprise_id]
-    );
-    const total = parseInt(countResult.rows[0].count);
-
-    const result = await pool.query(
-      'SELECT * FROM colis WHERE livreur = $1 AND enterprise_id = $2 ORDER BY id DESC LIMIT $3 OFFSET $4',
-      [livreur_id, enterprise_id, limit, offset]
-    );
-
-    res.json({
-      data: result.rows,
-      page: page,
-      limit: limit,
-      total: total,
-      pages: Math.ceil(total / limit)
-    });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
-
-const PORT = process.env.PORT || 3000;
 // ====================================
-// ROUTE PAIEMENT FEDAPAY
+// ROUTE PAIEMENT FEDAPAY (SIMPLIFIÉ)
 // ====================================
 app.post('/api/payment', verifyJWT, async (req, res) => {
   try {
     const { plan, amount, currency } = req.body;
     const enterprise_id = req.user.enterprise_id;
 
-    console.log('💳 Création transaction FedaPay:', { plan, amount, currency });
+    console.log('💳 Création lien paiement:', { plan, amount, currency });
 
-    // Créer une transaction FedaPay
-    const transaction = await fedapay.transaction.create({
-      description: `Abonnement ${plan} - DeliverHub`,
-      amount: amount,
-      currency: currency || 'XOF',
-      customer_email: req.user.email,
-      metadata: {
-        enterprise_id: enterprise_id,
-        plan: plan,
-        type: 'subscription'
-      }
-    });
+    if (!plan || !amount) {
+      return res.status(400).json({ error: 'Plan et montant requis' });
+    }
 
-    console.log('✅ Transaction créée:', transaction.id);
+    // Générer un lien de paiement FedaPay simple
+    const paymentLink = `https://app.fedapay.com/checkout?` +
+      `amount=${amount}` +
+      `&currency=${currency || 'XOF'}` +
+      `&customer_email=${encodeURIComponent(req.user.email)}` +
+      `&metadata[plan]=${plan}` +
+      `&metadata[enterprise_id]=${enterprise_id}`;
 
-    // Générer le lien de paiement
-    const paymentLink = transaction.authorize_url || `https://app.fedapay.com/checkout/${transaction.token}`;
+    console.log('✅ Lien paiement généré');
 
     res.json({
       success: true,
-      transaction_id: transaction.id,
       payment_link: paymentLink,
-      token: transaction.token
+      plan: plan,
+      amount: amount,
+      currency: currency || 'XOF'
     });
   } catch (error) {
-    console.error('❌ Erreur FedaPay:', error);
+    console.error('❌ Erreur paiement:', error);
     res.status(500).json({
-      error: 'Erreur lors de la création du paiement',
+      error: 'Erreur lors de la création du lien de paiement',
       details: error.message
     });
   }
 });
+
 // ====================================
-// ROUTE DE TEST FEDAPAY (PUBLIQUE - SANS JWT)
+// WEBHOOK FEDAPAY
 // ====================================
-app.get('/api/test-fedapay', async (req, res) => {
-  try {
-    console.log('🧪 Test FedaPay API...');
-    console.log('🔑 API Key configured:', !!process.env.FEDAPAY_SECRET_KEY);
-    
-    // Test simple
-    res.json({
-      success: true,
-      message: '✅ FedaPay API configurée',
-      apiKeyExists: !!process.env.FEDAPAY_SECRET_KEY,
-      timestamp: new Date().toISOString()
-    });
-  } catch (error) {
-    res.status(500).json({
-      success: false,
-      error: '❌ Erreur FedaPay',
-      details: error.message
-    });
-  }
-});
-// ====================================
-// VÉRIFIER PAIEMENT (pour webhook FedaPay)
-// ====================================
-app.post('/webhook/fedapay', express.raw({type: 'application/json'}), async (req, res) => {
+app.post('/webhook/fedapay', async (req, res) => {
   try {
     const event = req.body;
+    console.log('📩 Webhook FedaPay reçu:', event.type);
 
     if (event.type === 'transaction.success') {
-      const transactionId = event.data.id;
-      const metadata = event.data.metadata;
-
-      // Mettre à jour abonnement en base de données
-      // (À implémenter selon ta table)
-      console.log(`✅ Paiement confirmé pour entreprise: ${metadata.enterprise_id}, plan: ${metadata.plan}`);
+      const metadata = event.data?.metadata || {};
+      console.log(`✅ Paiement confirmé - Plan: ${metadata.plan}, Enterprise: ${metadata.enterprise_id}`);
     }
 
     res.json({ received: true });
@@ -736,12 +432,50 @@ app.post('/webhook/fedapay', express.raw({type: 'application/json'}), async (req
   }
 });
 
-app.listen(PORT, () => {
-  console.log(`✅ Backend en ligne : http://localhost:${PORT}`);
+// ====================================
+// ROUTE UPDATE COLIS LIVREUR
+// ====================================
+app.put('/parcels/:id/livreur', verifyJWT, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { livreur } = req.body;
+
+    const result = await pool.query(
+      'UPDATE colis SET livreur = $1 WHERE id = $2 RETURNING *',
+      [livreur, id]
+    );
+
+    res.json({ success: true, parcel: result.rows[0] });
+  } catch (error) {
+    console.error('Erreur update livreur:', error);
+    res.status(500).json({ error: error.message });
+  }
 });
 
-// ============================================
-// EXPORT
-// ============================================
+app.put('/parcels/:id/status', verifyJWT, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { status } = req.body;
+
+    const result = await pool.query(
+      'UPDATE colis SET status = $1, updated_at = NOW() WHERE id = $2 RETURNING *',
+      [status, id]
+    );
+
+    res.json({ success: true, parcel: result.rows[0] });
+  } catch (error) {
+    console.error('Erreur update status:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ====================================
+// DÉMARRER LE SERVEUR
+// ====================================
+const PORT = process.env.PORT || 3000;
+
+app.listen(PORT, () => {
+  console.log(`✅ Backend en ligne sur port ${PORT}`);
+});
 
 export default app;
