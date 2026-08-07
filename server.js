@@ -373,61 +373,111 @@ app.get('/tracking/:colis_id', verifyJWT, async (req, res) => {
 });
 
 // ====================================
-// ROUTE PAIEMENT FEDAPAY (SIMPLIFIÉ)
+// ROUTE PAIEMENT FEDAPAY (SÉCURISÉE)
 // ====================================
 app.post('/api/payment', verifyJWT, async (req, res) => {
   try {
     const { plan, amount, currency } = req.body;
     const enterprise_id = req.user.enterprise_id;
 
-    console.log('💳 Création lien paiement:', { plan, amount, currency });
+    console.log('💳 Création transaction FedaPay:', { plan, amount, currency });
 
     if (!plan || !amount) {
       return res.status(400).json({ error: 'Plan et montant requis' });
     }
 
-    // Générer un lien de paiement FedaPay simple
-    const paymentLink = `https://app.fedapay.com/checkout?` +
-      `amount=${amount}` +
-      `&currency=${currency || 'XOF'}` +
-      `&customer_email=${encodeURIComponent(req.user.email)}` +
-      `&metadata[plan]=${plan}` +
-      `&metadata[enterprise_id]=${enterprise_id}`;
+    // Appeler l'API FedaPay directement avec FETCH
+    const fedapayResponse = await fetch('https://api.fedapay.com/v1/transactions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${process.env.FEDAPAY_SECRET_KEY}`
+      },
+      body: JSON.stringify({
+        description: `Abonnement ${plan} - DeliverHub`,
+        amount: amount,
+        currency: currency || 'XOF',
+        customer_email: req.user.email,
+        metadata: {
+          plan: plan,
+          enterprise_id: enterprise_id,
+          type: 'subscription'
+        }
+      })
+    });
 
-    console.log('✅ Lien paiement généré');
+    if (!fedapayResponse.ok) {
+      const error = await fedapayResponse.json();
+      console.error('❌ Erreur FedaPay API:', error);
+      return res.status(500).json({
+        error: 'Erreur FedaPay',
+        details: error.message
+      });
+    }
+
+    const transaction = await fedapayResponse.json();
+    console.log('✅ Transaction créée:', transaction.id);
+
+    // Le lien de paiement
+    const paymentLink = `https://app.fedapay.com/checkout/${transaction.token}`;
 
     res.json({
       success: true,
+      transaction_id: transaction.id,
       payment_link: paymentLink,
       plan: plan,
-      amount: amount,
-      currency: currency || 'XOF'
+      amount: amount
     });
   } catch (error) {
     console.error('❌ Erreur paiement:', error);
     res.status(500).json({
-      error: 'Erreur lors de la création du lien de paiement',
+      error: 'Erreur lors de la création du paiement',
       details: error.message
     });
   }
 });
 
 // ====================================
-// WEBHOOK FEDAPAY
+// WEBHOOK FEDAPAY (SÉCURISÉ)
 // ====================================
 app.post('/webhook/fedapay', async (req, res) => {
   try {
     const event = req.body;
+    
     console.log('📩 Webhook FedaPay reçu:', event.type);
 
     if (event.type === 'transaction.success') {
-      const metadata = event.data?.metadata || {};
-      console.log(`✅ Paiement confirmé - Plan: ${metadata.plan}, Enterprise: ${metadata.enterprise_id}`);
+      const transaction = event.data;
+      const metadata = transaction.metadata || {};
+      
+      // Vérifier la transaction auprès de FedaPay pour confirmer
+      const verifyResponse = await fetch(`https://api.fedapay.com/v1/transactions/${transaction.id}`, {
+        headers: {
+          'Authorization': `Bearer ${process.env.FEDAPAY_SECRET_KEY}`
+        }
+      });
+
+      if (verifyResponse.ok) {
+        const verifiedTransaction = await verifyResponse.json();
+        
+        if (verifiedTransaction.status === 'approved') {
+          console.log(`✅ PAIEMENT CONFIRMÉ - Plan: ${metadata.plan}, Enterprise: ${metadata.enterprise_id}`);
+          
+          // Mettre à jour le plan dans la base de données
+          if (metadata.enterprise_id && metadata.plan) {
+            await pool.query(
+              'UPDATE entreprises SET plan = $1, updated_at = NOW() WHERE id = $2',
+              [metadata.plan, metadata.enterprise_id]
+            );
+            console.log(`✅ Plan ${metadata.plan} activé pour enterprise ${metadata.enterprise_id}`);
+          }
+        }
+      }
     }
 
     res.json({ received: true });
   } catch (error) {
-    console.error('Erreur webhook:', error);
+    console.error('❌ Erreur webhook:', error);
     res.status(400).json({ error: error.message });
   }
 });
