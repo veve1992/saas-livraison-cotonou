@@ -685,26 +685,30 @@ app.post('/api/payment', verifyJWT, async (req, res) => {
     });
   }
 });
+
 // ====================================
-// ROUTE DE TEST FEDAPAY
+// ROUTE DE TEST FEDAPAY (PUBLIQUE - SANS JWT)
 // ====================================
-app.get('/api/test-fedapay', verifyJWT, async (req, res) => {
+app.get('/api/test-fedapay', async (req, res) => {
   try {
-    const transactions = await FedaPay.Transaction.all();
+    console.log('🧪 Test FedaPay API...');
+    console.log('🔑 API Key configured:', !!process.env.FEDAPAY_SECRET_KEY);
+    
+    // Test simple
     res.json({
       success: true,
-      message: 'FedaPay API OK',
-      transactionCount: transactions.length
+      message: '✅ FedaPay API configurée',
+      apiKeyExists: !!process.env.FEDAPAY_SECRET_KEY,
+      timestamp: new Date().toISOString()
     });
   } catch (error) {
     res.status(500).json({
       success: false,
-      error: 'FedaPay API Error',
+      error: '❌ Erreur FedaPay',
       details: error.message
     });
   }
 });
-
 // ====================================
 // VÉRIFIER PAIEMENT (pour webhook FedaPay)
 // ====================================
