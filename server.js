@@ -5,7 +5,7 @@ import dotenv from 'dotenv';
 dotenv.config();
 import jwt from 'jsonwebtoken';
 import bcrypt from 'bcrypt';
-import { FedaPay } from 'fedapay';
+import FedaPay from 'fedapay';
 const { Pool } = pkg;
 const SECRET_KEY = process.env.SECRET_KEY || 'your-super-secret-key-change-in-production';
 
