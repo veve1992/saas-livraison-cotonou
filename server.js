@@ -373,7 +373,7 @@ app.get('/tracking/:colis_id', verifyJWT, async (req, res) => {
 });
 
 // ====================================
-// ROUTE PAIEMENT FEDAPAY (SÉCURISÉE)
+// ROUTE PAIEMENT FEDAPAY (SÉCURISÉE ET ROBUSTE)
 // ====================================
 app.post('/api/payment', verifyJWT, async (req, res) => {
   try {
@@ -386,7 +386,13 @@ app.post('/api/payment', verifyJWT, async (req, res) => {
       return res.status(400).json({ error: 'Plan et montant requis' });
     }
 
-    // Appeler l'API FedaPay directement avec FETCH
+    // Vérifier que la clé API existe
+    if (!process.env.FEDAPAY_SECRET_KEY) {
+      console.error('❌ FEDAPAY_SECRET_KEY non configurée');
+      return res.status(500).json({ error: 'Paiement non configuré' });
+    }
+
+    // Appeler FedaPay API avec gestion d'erreur complète
     const fedapayResponse = await fetch('https://api.fedapay.com/v1/transactions', {
       method: 'POST',
       headers: {
@@ -406,37 +412,71 @@ app.post('/api/payment', verifyJWT, async (req, res) => {
       })
     });
 
+    console.log('📡 FedaPay Response Status:', fedapayResponse.status);
+
+    // Vérifier le status de la réponse
     if (!fedapayResponse.ok) {
-      const error = await fedapayResponse.json();
-      console.error('❌ Erreur FedaPay API:', error);
+      const errorText = await fedapayResponse.text();
+      console.error('❌ FedaPay API Error Status:', fedapayResponse.status);
+      console.error('❌ FedaPay API Error Body:', errorText);
+      
       return res.status(500).json({
-        error: 'Erreur FedaPay',
-        details: error.message
+        error: 'Erreur FedaPay API',
+        status: fedapayResponse.status,
+        message: 'Le service de paiement est temporairement indisponible'
       });
     }
 
-    const transaction = await fedapayResponse.json();
+    // Essayer de parser la réponse JSON
+    const responseText = await fedapayResponse.text();
+    
+    if (!responseText) {
+      console.error('❌ FedaPay retourne une réponse vide');
+      return res.status(500).json({
+        error: 'Réponse vide de FedaPay',
+        message: 'Le service de paiement ne répond pas correctement'
+      });
+    }
+
+    let transaction;
+    try {
+      transaction = JSON.parse(responseText);
+    } catch (parseError) {
+      console.error('❌ Erreur parsing JSON FedaPay:', parseError);
+      console.error('❌ Réponse reçue:', responseText.substring(0, 200));
+      
+      return res.status(500).json({
+        error: 'Erreur parsing réponse FedaPay',
+        message: 'Le format de réponse est invalide'
+      });
+    }
+
     console.log('✅ Transaction créée:', transaction.id);
 
-    // Le lien de paiement
-    const paymentLink = `https://app.fedapay.com/checkout/${transaction.token}`;
+    // Générer le lien de paiement
+    const paymentLink = transaction.authorize_url || 
+                       `https://app.fedapay.com/checkout/${transaction.token}` ||
+                       `https://app.fedapay.com/checkout?transaction_id=${transaction.id}`;
 
     res.json({
       success: true,
       transaction_id: transaction.id,
       payment_link: paymentLink,
       plan: plan,
-      amount: amount
+      amount: amount,
+      currency: currency || 'XOF'
     });
+
   } catch (error) {
-    console.error('❌ Erreur paiement:', error);
+    console.error('❌ Erreur paiement:', error.message);
+    console.error('❌ Stack:', error.stack);
+    
     res.status(500).json({
       error: 'Erreur lors de la création du paiement',
       details: error.message
     });
   }
 });
-
 // ====================================
 // WEBHOOK FEDAPAY (SÉCURISÉ)
 // ====================================
