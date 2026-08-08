@@ -372,61 +372,117 @@ app.get('/tracking/:colis_id', verifyJWT, async (req, res) => {
   }
 });
 // ====================================
-// ROUTE PAIEMENT FEDAPAY (LIEN DIRECT - SÉCURISÉ)
+// ROUTE PAIEMENT FEDAPAY (AVEC API - VERSION ROBUSTE)
 // ====================================
 app.post('/api/payment', verifyJWT, async (req, res) => {
   try {
     const { plan, amount, currency } = req.body;
     const enterprise_id = req.user.enterprise_id;
 
-    console.log('💳 Création lien paiement FedaPay:', { plan, amount, currency });
+    console.log('💳 Création transaction FedaPay:', { plan, amount, currency });
 
     if (!plan || !amount) {
       return res.status(400).json({ error: 'Plan et montant requis' });
     }
 
-    // Générer lien de paiement DIRECT vers FedaPay
-    // Sans avoir besoin d'appel API
-    const paymentLink = `https://app.fedapay.com/checkout?` +
-      `amount=${amount}` +
-      `&currency=${currency || 'XOF'}` +
-      `&customer_email=${encodeURIComponent(req.user.email)}` +
-      `&description=${encodeURIComponent(`Abonnement ${plan} DeliverHub`)}` +
-      `&public_key=${process.env.FEDAPAY_PUBLIC_KEY || 'pk_test'}`;
-
-    console.log('✅ Lien paiement généré avec succès');
-
-    // Enregistrer la tentative de paiement en base pour tracking
-    try {
-      await pool.query(
-        `INSERT INTO paiements_tentatives (enterprise_id, plan, amount, currency, created_at) 
-         VALUES ($1, $2, $3, $4, NOW())`,
-        [enterprise_id, plan, amount, currency || 'XOF']
-      );
-    } catch (dbError) {
-      console.log('Note: Table paiements_tentatives n\'existe pas, c\'est OK');
+    // Vérifier que la clé API existe
+    if (!process.env.FEDAPAY_SECRET_KEY) {
+      console.error('❌ FEDAPAY_SECRET_KEY non configurée');
+      return res.status(500).json({ error: 'Paiement non configuré' });
     }
+
+    console.log('🔑 Utilisant clé FedaPay configurée');
+
+    // Appeler FedaPay API avec gestion d'erreur complète
+    const fedapayResponse = await fetch('https://api.fedapay.com/v1/transactions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${process.env.FEDAPAY_SECRET_KEY}`
+      },
+      body: JSON.stringify({
+        description: `Abonnement ${plan} - DeliverHub`,
+        amount: amount,
+        currency: currency || 'XOF',
+        customer_email: req.user.email,
+        metadata: {
+          plan: plan,
+          enterprise_id: enterprise_id,
+          type: 'subscription'
+        }
+      })
+    });
+
+    console.log('📡 FedaPay Response Status:', fedapayResponse.status);
+
+    // Vérifier le status de la réponse
+    if (!fedapayResponse.ok) {
+      const errorText = await fedapayResponse.text();
+      console.error('❌ FedaPay API Error Status:', fedapayResponse.status);
+      console.error('❌ FedaPay API Error Body:', errorText);
+      
+      return res.status(500).json({
+        error: 'Erreur FedaPay API',
+        status: fedapayResponse.status,
+        message: 'Le service de paiement a retourné une erreur'
+      });
+    }
+
+    // Essayer de parser la réponse JSON
+    const responseText = await fedapayResponse.text();
+    
+    if (!responseText) {
+      console.error('❌ FedaPay retourne une réponse vide');
+      return res.status(500).json({
+        error: 'Réponse vide de FedaPay',
+        message: 'Le service de paiement ne répond pas correctement'
+      });
+    }
+
+    let transaction;
+    try {
+      transaction = JSON.parse(responseText);
+    } catch (parseError) {
+      console.error('❌ Erreur parsing JSON FedaPay:', parseError);
+      console.error('❌ Réponse reçue:', responseText.substring(0, 200));
+      
+      return res.status(500).json({
+        error: 'Erreur parsing réponse FedaPay',
+        message: 'Le format de réponse est invalide'
+      });
+    }
+
+    console.log('✅ Transaction créée:', transaction.id);
+    console.log('✅ Lien paiement:', transaction.authorize_url);
+
+    // Générer le lien de paiement
+    const paymentLink = transaction.authorize_url || 
+                       transaction.checkout_url ||
+                       `https://app.fedapay.com/checkout/${transaction.token}`;
 
     res.json({
       success: true,
+      transaction_id: transaction.id,
       payment_link: paymentLink,
       plan: plan,
       amount: amount,
       currency: currency || 'XOF',
-      message: 'Vous serez redirigé vers FedaPay pour payer'
+      message: 'Redirection vers FedaPay'
     });
 
   } catch (error) {
     console.error('❌ Erreur paiement:', error.message);
+    console.error('❌ Stack:', error.stack);
     
     res.status(500).json({
-      error: 'Erreur lors de la création du lien de paiement',
+      error: 'Erreur lors de la création du paiement',
       details: error.message
     });
   }
 });
+
 // ====================================
-// WEBHOOK FEDAPAY (SÉCURISÉ)
+// WEBHOOK FEDAPAY (POUR CONFIRMER LES PAIEMENTS)
 // ====================================
 app.post('/webhook/fedapay', async (req, res) => {
   try {
@@ -438,27 +494,17 @@ app.post('/webhook/fedapay', async (req, res) => {
       const transaction = event.data;
       const metadata = transaction.metadata || {};
       
-      // Vérifier la transaction auprès de FedaPay pour confirmer
-      const verifyResponse = await fetch(`https://api.fedapay.com/v1/transactions/${transaction.id}`, {
-        headers: {
-          'Authorization': `Bearer ${process.env.FEDAPAY_SECRET_KEY}`
-        }
-      });
-
-      if (verifyResponse.ok) {
-        const verifiedTransaction = await verifyResponse.json();
+      console.log(`✅ PAIEMENT CONFIRMÉ - Enterprise: ${metadata.enterprise_id}, Plan: ${metadata.plan}`);
+      
+      // Mettre à jour le plan dans la base de données
+      if (metadata.enterprise_id && metadata.plan) {
+        const result = await pool.query(
+          'UPDATE entreprises SET plan = $1, updated_at = NOW() WHERE id = $2 RETURNING *',
+          [metadata.plan, metadata.enterprise_id]
+        );
         
-        if (verifiedTransaction.status === 'approved') {
-          console.log(`✅ PAIEMENT CONFIRMÉ - Plan: ${metadata.plan}, Enterprise: ${metadata.enterprise_id}`);
-          
-          // Mettre à jour le plan dans la base de données
-          if (metadata.enterprise_id && metadata.plan) {
-            await pool.query(
-              'UPDATE entreprises SET plan = $1, updated_at = NOW() WHERE id = $2',
-              [metadata.plan, metadata.enterprise_id]
-            );
-            console.log(`✅ Plan ${metadata.plan} activé pour enterprise ${metadata.enterprise_id}`);
-          }
+        if (result.rows.length > 0) {
+          console.log(`✅ Plan ${metadata.plan} activé pour enterprise ${metadata.enterprise_id}`);
         }
       }
     }
@@ -469,7 +515,6 @@ app.post('/webhook/fedapay', async (req, res) => {
     res.status(400).json({ error: error.message });
   }
 });
-
 // ====================================
 // ROUTE UPDATE COLIS LIVREUR
 // ====================================
