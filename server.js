@@ -102,10 +102,12 @@ app.post('/register-gestionnaire', async (req, res) => {
     const hashedPassword = await bcrypt.hash(password, 10);
     
     const result = await pool.query(
-      'INSERT INTO entreprises (email, password, nom_entreprise, company_code, country, phone_prefix, plan) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id, email, nom_entreprise, company_code',
-      [email, hashedPassword, nom_entreprise, company_code, country || 'BJ', phone_prefix || '+229', 'startup']
-    );
-
+  `INSERT INTO entreprises 
+   (email, password, nom_entreprise, company_code, country, phone_prefix, plan, plan_expiry, created_at, updated_at)
+   VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW(), NOW())
+   RETURNING id, email, nom_entreprise, company_code, plan, plan_expiry`,
+  [email, hashedPassword, nom_entreprise, company_code, country || 'BJ', phone_prefix || '+229', 'startup', trialExpiry]
+);
     const token = jwt.sign({ 
       id: result.rows[0].id, 
       email: result.rows[0].email,
