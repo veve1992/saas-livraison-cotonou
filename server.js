@@ -516,6 +516,30 @@ app.post('/webhook/fedapay', async (req, res) => {
   }
 });
 // ====================================
+// ROUTE DE TEST FEDAPAY
+// ====================================
+app.get('/api/test-fedapay', async (req, res) => {
+  try {
+    console.log('🧪 Test FedaPay...');
+    console.log('🔑 API Key exists:', !!process.env.FEDAPAY_SECRET_KEY);
+    console.log('🔑 API Key starts with:', process.env.FEDAPAY_SECRET_KEY?.substring(0, 10) + '...');
+    
+    res.json({
+      success: true,
+      message: '✅ FedaPay configurée',
+      apiKeyExists: !!process.env.FEDAPAY_SECRET_KEY,
+      keyPrefix: process.env.FEDAPAY_SECRET_KEY?.substring(0, 10) + '...',
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: 'Erreur test FedaPay',
+      details: error.message
+    });
+  }
+});
+// ====================================
 // ROUTE UPDATE COLIS LIVREUR
 // ====================================
 app.put('/parcels/:id/livreur', verifyJWT, async (req, res) => {
