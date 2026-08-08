@@ -105,7 +105,7 @@ app.post('/register-gestionnaire', async (req, res) => {
   `INSERT INTO entreprises 
    (email, password, nom_entreprise, company_code, country, phone_prefix, plan, plan_expiry, created_at, updated_at)
    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW(), NOW())
-   RETURNING id, email, nom_entreprise, company_code, plan, plan_expiry`,
+   RETURNING id, email, nom_entreprise, company_code, country, phone_prefix, plan, plan_expiry`,
   [email, hashedPassword, nom_entreprise, company_code, country || 'BJ', phone_prefix || '+229', 'startup', trialExpiry]
 );
     const token = jwt.sign({ 
@@ -160,23 +160,19 @@ app.post('/login-gestionnaire', async (req, res) => {
     }, SECRET_KEY, { expiresIn: '24h' });
 
     res.json({
-      success: true,
-      token,
-      entreprise: {
-        id: entreprise.id,
-        email: entreprise.email,
-        nom_entreprise: entreprise.nom_entreprise,
-        company_code: entreprise.company_code,
-        country: entreprise.country,
-        phone_prefix: entreprise.phone_prefix
-      }
-    });
-  } catch (error) {
-    console.error('Erreur login:', error);
-    res.status(500).json({ error: error.message });
+  success: true,
+  token,
+  entreprise: {
+    id: entreprise.id,
+    email: entreprise.email,
+    nom_entreprise: entreprise.nom_entreprise,
+    company_code: entreprise.company_code,
+    country: entreprise.country,
+    phone_prefix: entreprise.phone_prefix,
+    plan: entreprise.plan,
+    plan_expiry: entreprise.plan_expiry
   }
 });
-
 // ====================================
 // ROUTE INSCRIPTION LIVREUR
 // ====================================
