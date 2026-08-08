@@ -159,7 +159,7 @@ app.post('/login-gestionnaire', async (req, res) => {
       enterprise_id: entreprise.id
     }, SECRET_KEY, { expiresIn: '24h' });
 
-    res.json({
+  res.json({
   success: true,
   token,
   entreprise: {
@@ -173,6 +173,12 @@ app.post('/login-gestionnaire', async (req, res) => {
     plan_expiry: entreprise.plan_expiry
   }
 });
+  } catch (error) {
+    console.error('Erreur login:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // ====================================
 // ROUTE INSCRIPTION LIVREUR
 // ====================================
