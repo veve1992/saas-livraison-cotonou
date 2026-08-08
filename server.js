@@ -95,28 +95,33 @@ app.post('/register-gestionnaire', async (req, res) => {
   try {
     const { email, password, nom_entreprise, company_code, country, phone_prefix } = req.body;
     
+    // Calculer expiration du trial (7 jours)
+    const trialExpiry = new Date();
+    trialExpiry.setDate(trialExpiry.getDate() + 7);
+    
     if (!email || !password || !nom_entreprise || !company_code) {
       return res.status(400).json({ error: 'Champs manquants' });
     }
-
+    
     const hashedPassword = await bcrypt.hash(password, 10);
     
     const result = await pool.query(
-  `INSERT INTO entreprises 
-   (email, password, nom_entreprise, company_code, country, phone_prefix, plan, plan_expiry, created_at, updated_at)
-   VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW(), NOW())
-   RETURNING id, email, nom_entreprise, company_code, country, phone_prefix, plan, plan_expiry`,
-  [email, hashedPassword, nom_entreprise, company_code, country || 'BJ', phone_prefix || '+229', 'startup', trialExpiry]
-);
+      `INSERT INTO entreprises 
+       (email, password, nom_entreprise, company_code, country, phone_prefix, plan, plan_expiry, created_at, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW(), NOW())
+       RETURNING id, email, nom_entreprise, company_code, country, phone_prefix, plan, plan_expiry`,
+      [email, hashedPassword, nom_entreprise, company_code, country || 'BJ', phone_prefix || '+229', 'startup', trialExpiry]
+    );
+    
     const token = jwt.sign({ 
       id: result.rows[0].id, 
       email: result.rows[0].email,
       enterprise_id: result.rows[0].id
     }, SECRET_KEY, { expiresIn: '24h' });
-
+    
     res.json({
       success: true,
-      message: '✅ Inscription réussie',
+      message: '✅ Inscription réussie - 7 jours de trial gratuits !',
       token,
       entreprise: result.rows[0]
     });
@@ -125,7 +130,6 @@ app.post('/register-gestionnaire', async (req, res) => {
     res.status(500).json({ error: error.message });
   }
 });
-
 // ====================================
 // ROUTE LOGIN GESTIONNAIRE
 // ====================================
