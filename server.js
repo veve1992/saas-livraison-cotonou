@@ -5,7 +5,47 @@ import dotenv from 'dotenv';
 dotenv.config();
 import jwt from 'jsonwebtoken';
 import bcrypt from 'bcrypt';
+import axios from 'axios';
 
+// ====================================
+// FONCTION ENVOI EMAIL AVEC RESEND
+// ====================================
+
+const sendEmailToAdmin = async (subject, htmlContent) => {
+  try {
+    await axios.post('https://api.resend.com/emails', {
+      from: 'DeliverHub <onboarding@resend.dev>',
+      to: process.env.ADMIN_EMAIL,
+      subject: subject,
+      html: htmlContent
+    }, {
+      headers: {
+        'Authorization': `Bearer ${process.env.RESEND_API_KEY}`
+      }
+    });
+    console.log('✅ Email admin envoyé via Resend');
+  } catch (error) {
+    console.error('❌ Erreur email admin:', error.message);
+  }
+};
+
+const sendEmailToClient = async (email, subject, htmlContent) => {
+  try {
+    await axios.post('https://api.resend.com/emails', {
+      from: 'DeliverHub <onboarding@resend.dev>',
+      to: email,
+      subject: subject,
+      html: htmlContent
+    }, {
+      headers: {
+        'Authorization': `Bearer ${process.env.RESEND_API_KEY}`
+      }
+    });
+    console.log('✅ Email client envoyé via Resend');
+  } catch (error) {
+    console.error('❌ Erreur email client:', error.message);
+  }
+};
 // ====================================
 // CONFIGURATION
 // ====================================
@@ -372,62 +412,167 @@ app.get('/tracking/:colis_id', verifyJWT, async (req, res) => {
   }
 });
 // ====================================
-// ROUTE PAIEMENT FEDAPAY (LIEN SIMPLE - RECOMMANDÉ)
+// ROUTE DEMANDE DE PAIEMENT (MANUEL)
 // ====================================
 app.post('/api/payment', verifyJWT, async (req, res) => {
   try {
-    const { plan, amount, currency } = req.body;
+    const { plan } = req.body;
     const enterprise_id = req.user.enterprise_id;
 
-    console.log('💳 Création lien paiement FedaPay:', { plan, amount, currency });
+    console.log('💳 Demande de paiement:', { plan, enterprise_id });
 
-    if (!plan || !amount) {
-      return res.status(400).json({ error: 'Plan et montant requis' });
+    if (!plan) {
+      return res.status(400).json({ error: 'Plan requis' });
     }
 
-    // Générer un token unique pour cette tentative
-    const paymentReference = `DLH-${Date.now()}-${enterprise_id}`;
+    // Récupérer les données de l'entreprise
+    const entrepriseResult = await pool.query(
+      'SELECT * FROM entreprises WHERE id = $1',
+      [enterprise_id]
+    );
 
-    // Lien de paiement FedaPay simple
-    // FedaPay génère automatiquement le lien de paiement
-    const paymentLink = `https://app.fedapay.com/checkout?` +
-      `amount=${amount}` +
-      `&currency=${currency || 'XOF'}` +
-      `&description=${encodeURIComponent(`Abonnement ${plan} DeliverHub`)}` +
-      `&customer_email=${encodeURIComponent(req.user.email)}` +
-      `&reference=${paymentReference}` +
-      `&callback_url=${encodeURIComponent(`https://saas-livraison-cotonou-backend.onrender.com/payment-callback`)}`;
-
-    console.log('✅ Lien de paiement généré');
-
-    // Enregistrer la tentative de paiement
-    try {
-      await pool.query(
-        `INSERT INTO paiements_tentatives (enterprise_id, plan, amount, currency, reference, status, created_at) 
-         VALUES ($1, $2, $3, $4, $5, $6, NOW())`,
-        [enterprise_id, plan, amount, currency || 'XOF', paymentReference, 'pending']
-      );
-    } catch (dbError) {
-      console.log('Note: Table paiements_tentatives n\'existe pas');
+    if (entrepriseResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Entreprise non trouvée' });
     }
+
+    const entreprise = entrepriseResult.rows[0];
+
+    // Déterminer le montant selon le plan
+    const amounts = {
+      pro: 2900,
+      enterprise: 9900
+    };
+
+    const amount = amounts[plan.toLowerCase()];
+    if (!amount) {
+      return res.status(400).json({ error: 'Plan invalide' });
+    }
+
+    // Générer une référence unique
+    const reference = `PAY-${Date.now()}-${enterprise_id}`;
+
+    // Enregistrer la demande de paiement
+    const paymentResult = await pool.query(
+      `INSERT INTO paiement_demandes (enterprise_id, company_code, email, plan, amount, currency, reference, status)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+       RETURNING *`,
+      [enterprise_id, entreprise.company_code, entreprise.email, plan, amount, 'XOF', reference, 'pending']
+    );
+
+    const payment = paymentResult.rows[0];
+
+    console.log('✅ Demande de paiement enregistrée:', reference);
+
+    // ENVOYER EMAIL AU CONCEPTEUR
+    await sendEmailToAdmin(
+      `🔔 Nouvelle demande de paiement - ${entreprise.nom_entreprise}`,
+      `
+        <h2>Nouvelle demande de paiement</h2>
+        <p><strong>Entreprise:</strong> ${entreprise.nom_entreprise}</p>
+        <p><strong>Code:</strong> ${entreprise.company_code}</p>
+        <p><strong>Email:</strong> ${entreprise.email}</p>
+        <p><strong>Plan:</strong> ${plan.toUpperCase()}</p>
+        <p><strong>Montant:</strong> ${amount} XOF</p>
+        <p><strong>Référence:</strong> ${reference}</p>
+        <hr>
+        <p>Vérifiez le paiement FedaPay et approuvez via le lien ci-dessous :</p>
+        <p><a href="https://saas-livraison-cotonou-backend.onrender.com/admin/approve?reference=${reference}">
+          ✅ Approuver le paiement
+        </a></p>
+      `
+    );
 
     res.json({
       success: true,
-      payment_link: paymentLink,
-      reference: paymentReference,
-      plan: plan,
+      message: 'Demande de paiement envoyée - Vérifiez votre email',
+      reference: reference,
       amount: amount,
-      currency: currency || 'XOF',
-      message: 'Vous serez redirigé vers FedaPay'
+      plan: plan
     });
 
   } catch (error) {
-    console.error('❌ Erreur paiement:', error.message);
-    
-    res.status(500).json({
-      error: 'Erreur lors de la création du paiement',
-      details: error.message
+    console.error('❌ Erreur demande paiement:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ====================================
+// ROUTE APPROUVER PAIEMENT (ADMIN)
+// ====================================
+app.post('/api/admin/approve-payment', async (req, res) => {
+  try {
+    const { reference, admin_password } = req.body;
+
+    // Vérifier mot de passe admin
+    if (admin_password !== process.env.ADMIN_PASSWORD) {
+      return res.status(401).json({ error: 'Mot de passe admin incorrect' });
+    }
+
+    console.log('✅ Approbation paiement:', reference);
+
+    // Récupérer la demande
+    const paymentResult = await pool.query(
+      'SELECT * FROM paiement_demandes WHERE reference = $1',
+      [reference]
+    );
+
+    if (paymentResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Demande non trouvée' });
+    }
+
+    const payment = paymentResult.rows[0];
+
+    // Mettre à jour la demande à "approved"
+    await pool.query(
+      'UPDATE paiement_demandes SET status = $1, approved_at = NOW() WHERE reference = $2',
+      ['approved', reference]
+    );
+
+    // Calculer la date d'expiration (30 jours après)
+    const expiryDate = new Date();
+    expiryDate.setDate(expiryDate.getDate() + 30);
+
+    // Mettre à jour le plan de l'entreprise
+    const updateResult = await pool.query(
+      `UPDATE entreprises 
+       SET plan = $1, plan_expiry = $2, updated_at = NOW() 
+       WHERE id = $3
+       RETURNING *`,
+      [payment.plan, expiryDate, payment.enterprise_id]
+    );
+
+    console.log(`✅ Plan ${payment.plan} activé jusqu'au ${expiryDate}`);
+
+    // ENVOYER EMAIL À L'ENTREPRISE
+    await sendEmailToClient(
+      payment.email,
+      `✅ Votre abonnement ${payment.plan.toUpperCase()} est activé !`,
+      `
+        <h2>Paiement confirmé !</h2>
+        <p>Bonjour,</p>
+        <p>Votre paiement a été confirmé et votre abonnement <strong>${payment.plan.toUpperCase()}</strong> est maintenant actif !</p>
+        <hr>
+        <p><strong>Détails :</strong></p>
+        <ul>
+          <li>Plan: <strong>${payment.plan.toUpperCase()}</strong></li>
+          <li>Montant: <strong>${payment.amount} XOF</strong></li>
+          <li>Valide jusqu'au: <strong>${expiryDate.toLocaleDateString('fr-FR')}</strong></li>
+          <li>Code entreprise: <strong>${payment.company_code}</strong></li>
+        </ul>
+        <hr>
+        <p>Bienvenue sur DeliverHub !</p>
+      `
+    );
+
+    res.json({
+      success: true,
+      message: `Plan ${payment.plan} activé pour 30 jours`,
+      expiry_date: expiryDate
     });
+
+  } catch (error) {
+    console.error('❌ Erreur approbation:', error);
+    res.status(500).json({ error: error.message });
   }
 });
 
