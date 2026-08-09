@@ -621,7 +621,23 @@ app.post('/api/admin/approve-payment', async (req, res) => {
     res.status(500).json({ error: error.message });
   }
 });
-
+// ====================================
+// ROUTE GET DEMANDES DE PAIEMENT (ADMIN)
+// ====================================
+app.get('/api/admin/payments', async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT * FROM paiement_demandes 
+       WHERE status = 'pending' 
+       ORDER BY created_at DESC`
+    );
+    
+    res.json(result.rows);
+  } catch (error) {
+    console.error('Erreur fetch payments:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
 // ====================================
 // CALLBACK PAIEMENT FEDAPAY
 // ====================================
