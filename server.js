@@ -131,7 +131,22 @@ app.post('/register-gestionnaire', async (req, res) => {
         <p>L'entreprise a accès au trial gratuit (7 jours, 10 colis max, 2 livreurs max).</p>
       `
     );
-    
+    // ENVOYER EMAIL AU GESTIONNAIRE
+await sendEmailToClient(
+  email,
+  `🎉 Bienvenue sur DeliverHub !`,
+  `
+    <h2>Votre inscription est confirmée !</h2>
+    <p>Bonjour ${nom_entreprise},</p>
+    <p>Vous disposez maintenant de <strong>7 jours gratuits</strong> pour tester DeliverHub !</p>
+    <hr>
+    <p><strong>Votre code entreprise :</strong> ${company_code}</p>
+    <p><strong>Limite trial :</strong> 10 colis, 2 livreurs</p>
+    <p><strong>Trial expire le :</strong> ${trialExpiry.toLocaleDateString('fr-FR')}</p>
+    <hr>
+    <p>Commencez à ajouter vos colis maintenant !</p>
+  `
+);
     const token = jwt.sign({ 
       id: entreprise.id, 
       email: entreprise.email,
