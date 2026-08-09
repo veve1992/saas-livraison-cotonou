@@ -113,17 +113,36 @@ app.post('/register-gestionnaire', async (req, res) => {
       [email, hashedPassword, nom_entreprise, company_code, country || 'BJ', phone_prefix || '+229', 'startup', trialExpiry]
     );
     
+    const entreprise = result.rows[0];
+    
+    console.log('✅ Inscription réussie:', { email, nom_entreprise, company_code });
+    
+    // ENVOYER EMAIL À L'ADMIN
+    await sendEmailToAdmin(
+      `🎉 Nouvelle inscription - ${nom_entreprise}`,
+      `
+        <h2>Nouvelle entreprise inscrite !</h2>
+        <p><strong>Nom:</strong> ${nom_entreprise}</p>
+        <p><strong>Email:</strong> ${email}</p>
+        <p><strong>Code:</strong> ${company_code}</p>
+        <p><strong>Pays:</strong> ${country || 'BJ'}</p>
+        <p><strong>Trial expire le:</strong> ${trialExpiry.toLocaleDateString('fr-FR')}</p>
+        <hr>
+        <p>L'entreprise a accès au trial gratuit (7 jours, 10 colis max, 2 livreurs max).</p>
+      `
+    );
+    
     const token = jwt.sign({ 
-      id: result.rows[0].id, 
-      email: result.rows[0].email,
-      enterprise_id: result.rows[0].id
+      id: entreprise.id, 
+      email: entreprise.email,
+      enterprise_id: entreprise.id
     }, SECRET_KEY, { expiresIn: '24h' });
     
     res.json({
       success: true,
       message: '✅ Inscription réussie - 7 jours de trial gratuits !',
       token,
-      entreprise: result.rows[0]
+      entreprise: entreprise
     });
   } catch (error) {
     console.error('Erreur inscription:', error);
