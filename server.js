@@ -13,7 +13,9 @@ import axios from 'axios';
 
 const sendEmailToAdmin = async (subject, htmlContent) => {
   try {
-    await axios.post('https://api.resend.com/emails', {
+    console.log('📧 Envoi email admin à:', process.env.ADMIN_EMAIL);
+    
+    const response = await axios.post('https://api.resend.com/emails', {
       from: 'DeliverHub <onboarding@resend.dev>',
       to: process.env.ADMIN_EMAIL,
       subject: subject,
@@ -23,12 +25,14 @@ const sendEmailToAdmin = async (subject, htmlContent) => {
         'Authorization': `Bearer ${process.env.RESEND_API_KEY}`
       }
     });
+    
     console.log('✅ Email admin envoyé via Resend');
+    return true;
   } catch (error) {
-    console.error('❌ Erreur email admin:', error.message);
+    console.error('❌ ERREUR RESEND ADMIN:', error.response?.data || error.message);
+    return false;
   }
 };
-
 const sendEmailToClient = async (email, subject, htmlContent) => {
   try {
     await axios.post('https://api.resend.com/emails', {
