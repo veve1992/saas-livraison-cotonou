@@ -328,7 +328,28 @@ app.post('/login-livreur', async (req, res) => {
 app.post('/parcels', verifyJWT, async (req, res) => {
   try {
     const { de, a, prix, enterprise_id, nom_receptionnaire, prenom_receptionnaire, contact_receptionnaire, adresse_livraison, description_colis, photo_colis, status } = req.body;
-    
+   // Vérifier si plan est expiré (seulement pour gestionnaires)
+    if (req.user.enterprise_id) {
+      const enterpriseResult = await pool.query(
+        'SELECT plan_expiry FROM entreprises WHERE id = $1',
+        [req.user.enterprise_id]
+      );
+      
+      if (enterpriseResult.rows.length === 0) {
+        return res.status(404).json({ error: 'Entreprise non trouvée' });
+      }
+      
+      const now = new Date();
+      const expiry = new Date(enterpriseResult.rows[0].plan_expiry);
+      
+      if (now > expiry) {
+        return res.status(403).json({ 
+          error: 'Votre plan a expiré. Veuillez renouveler votre abonnement.',
+          isExpired: true 
+        });
+      }
+    } 
+
     if (!de || !a || !prix || !enterprise_id) {
       return res.status(400).json({ error: 'Champs requis manquants' });
     }
@@ -353,6 +374,27 @@ app.get('/parcels', verifyJWT, async (req, res) => {
 
     if (!enterprise_id) {
       return res.status(400).json({ error: 'enterprise_id requis' });
+    }
+// Vérifier si plan est expiré (seulement pour gestionnaires)
+    if (req.user.enterprise_id) {
+      const enterpriseResult = await pool.query(
+        'SELECT plan_expiry FROM entreprises WHERE id = $1',
+        [req.user.enterprise_id]
+      );
+      
+      if (enterpriseResult.rows.length === 0) {
+        return res.status(404).json({ error: 'Entreprise non trouvée' });
+      }
+      
+      const now = new Date();
+      const expiry = new Date(enterpriseResult.rows[0].plan_expiry);
+      
+      if (now > expiry) {
+        return res.status(403).json({ 
+          error: 'Votre plan a expiré. Veuillez renouveler votre abonnement.',
+          isExpired: true 
+        });
+      }
     }
 
     const result = await pool.query(
@@ -390,7 +432,27 @@ app.get('/livreurs', verifyJWT, async (req, res) => {
     if (!enterprise_id) {
       return res.status(400).json({ error: 'enterprise_id requis' });
     }
-
+// Vérifier si plan est expiré (seulement pour gestionnaires)
+    if (req.user.enterprise_id) {
+      const enterpriseResult = await pool.query(
+        'SELECT plan_expiry FROM entreprises WHERE id = $1',
+        [req.user.enterprise_id]
+      );
+      
+      if (enterpriseResult.rows.length === 0) {
+        return res.status(404).json({ error: 'Entreprise non trouvée' });
+      }
+      
+      const now = new Date();
+      const expiry = new Date(enterpriseResult.rows[0].plan_expiry);
+      
+      if (now > expiry) {
+        return res.status(403).json({ 
+          error: 'Votre plan a expiré. Veuillez renouveler votre abonnement.',
+          isExpired: true 
+        });
+      }
+    }
     const result = await pool.query(
       'SELECT * FROM livreurs WHERE enterprise_id = $1',
       [enterprise_id]
