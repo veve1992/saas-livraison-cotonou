@@ -402,6 +402,46 @@ app.get('/livreurs', verifyJWT, async (req, res) => {
     res.status(500).json({ error: error.message });
   }
 });
+// ====================================
+// ROUTE COLIS DU LIVREUR
+// ====================================
+app.get('/livreur/mes-colis/:livreur_id', verifyJWT, async (req, res) => {
+  try {
+    const { livreur_id } = req.params;
+    const { enterprise_id, page = 1 } = req.query;
+    
+    if (!enterprise_id || !livreur_id) {
+      return res.status(400).json({ error: 'Paramètres manquants' });
+    }
+
+    const limit = 10;
+    const offset = (page - 1) * limit;
+
+    // Récupérer les colis assignés à ce livreur
+    const result = await pool.query(
+      'SELECT * FROM colis WHERE enterprise_id = $1 AND livreur = $2 ORDER BY created_at DESC LIMIT $3 OFFSET $4',
+      [enterprise_id, livreur_id, limit, offset]
+    );
+
+    const countResult = await pool.query(
+      'SELECT COUNT(*) as total FROM colis WHERE enterprise_id = $1 AND livreur = $2',
+      [enterprise_id, livreur_id]
+    );
+
+    const total = parseInt(countResult.rows[0].total);
+    const pages = Math.ceil(total / limit);
+
+    res.json({
+      data: result.rows,
+      page: parseInt(page),
+      pages,
+      total
+    });
+  } catch (error) {
+    console.error('Erreur récupération colis livreur:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
 
 // ====================================
 // ROUTE TRACKING PUBLIC
