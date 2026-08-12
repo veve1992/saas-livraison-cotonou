@@ -587,9 +587,9 @@ app.post('/api/payment', verifyJWT, async (req, res) => {
 
     // Déterminer le montant selon le plan
     const amounts = {
-      pro: 2900,
-      enterprise: 9900
-    };
+  pro: 26950,      // 49 dollars * 550
+  enterprise: 54450  // 99 dollars * 550
+};
 
     const amount = amounts[plan.toLowerCase()];
     if (!amount) {
