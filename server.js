@@ -864,14 +864,18 @@ app.put('/parcels/:id/status', verifyJWT, async (req, res) => {
     const { id } = req.params;
     const { status, latitude, longitude, enterprise_id } = req.body;
     
-    // Pour l'instant on ignore latitude/longitude
-    // (on peut les ajouter à DB plus tard)
+    // Si status = 'Livré' ET on a GPS, enregistrer
+    let query = 'UPDATE colis SET status = $1, updated_at = NOW()';
+    let params = [status, id];
     
-    const result = await pool.query(
-      'UPDATE colis SET status = $1, updated_at = NOW() WHERE id = $2 RETURNING *',
-      [status, id]
-    );
-
+    if (status === 'Livré' && latitude && longitude) {
+      query += ', latitude = $3, longitude = $4, date_livraison = NOW()';
+      params = [status, id, latitude, longitude];
+    }
+    
+    query += ' WHERE id = $' + (params.length - 1) + ' RETURNING *';
+    
+    const result = await pool.query(query, params);
     res.json({ success: true, parcel: result.rows[0] });
   } catch (error) {
     console.error('Erreur update status:', error);
