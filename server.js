@@ -741,6 +741,36 @@ app.get('/api/admin/payments', async (req, res) => {
   }
 });
 // ====================================
+// ROUTE LISTER ENTREPRISES (ADMIN)
+// ====================================
+app.get('/api/admin/enterprises', async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT id, nom_entreprise, company_code, email, plan, plan_expiry, created_at 
+       FROM entreprises 
+       ORDER BY created_at DESC`
+    );
+
+    const enterprises = result.rows.map(e => {
+      const now = new Date();
+      const expiry = new Date(e.plan_expiry);
+      const isExpired = now > expiry;
+      
+      return {
+        ...e,
+        isExpired,
+        daysLeft: Math.ceil((expiry - now) / (1000 * 60 * 60 * 24))
+      };
+    });
+
+    res.json(enterprises);
+  } catch (error) {
+    console.error('Erreur fetch enterprises:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ====================================
 // CALLBACK PAIEMENT FEDAPAY
 // ====================================
 app.get('/payment-callback', async (req, res) => {
