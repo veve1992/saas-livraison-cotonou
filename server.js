@@ -862,8 +862,11 @@ app.put('/parcels/:id/livreur', verifyJWT, async (req, res) => {
 app.put('/parcels/:id/status', verifyJWT, async (req, res) => {
   try {
     const { id } = req.params;
-    const { status } = req.body;
-
+    const { status, latitude, longitude, enterprise_id } = req.body;
+    
+    // Pour l'instant on ignore latitude/longitude
+    // (on peut les ajouter à DB plus tard)
+    
     const result = await pool.query(
       'UPDATE colis SET status = $1, updated_at = NOW() WHERE id = $2 RETURNING *',
       [status, id]
