@@ -858,32 +858,21 @@ app.put('/parcels/:id/livreur', verifyJWT, async (req, res) => {
     res.status(500).json({ error: error.message });
   }
 });
-
 app.put('/parcels/:id/status', verifyJWT, async (req, res) => {
   try {
     const { id } = req.params;
     const { status, latitude, longitude } = req.body;
     
-    let query = 'UPDATE colis SET status = $1, updated_at = NOW()';
-    let params = [status, id];
-    let paramCount = 2;
+    let query, params;
     
-    // Si status = 'Livré' ET on a GPS, enregistrer
+    // Si status = 'Livré' ET on a GPS
     if (status === 'Livré' && latitude && longitude) {
-      paramCount += 1;
-      query += `, latitude = $${paramCount}`;
-      params.push(latitude);
-      
-      paramCount += 1;
-      query += `, longitude = $${paramCount}`;
-      params.push(longitude);
-      
-      query += ', date_livraison = NOW()';
+      query = 'UPDATE colis SET status = $1, latitude = $2, longitude = $3, date_livraison = NOW(), updated_at = NOW() WHERE id = $4 RETURNING *';
+      params = [status, latitude, longitude, id];
+    } else {
+      query = 'UPDATE colis SET status = $1, updated_at = NOW() WHERE id = $2 RETURNING *';
+      params = [status, id];
     }
-    
-    paramCount += 1;
-    query += ` WHERE id = $${paramCount} RETURNING *`;
-    params.push(id);
     
     const result = await pool.query(query, params);
     res.json({ success: true, parcel: result.rows[0] });
