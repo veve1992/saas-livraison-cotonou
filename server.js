@@ -769,6 +769,52 @@ app.get('/api/admin/enterprises', async (req, res) => {
     res.status(500).json({ error: error.message });
   }
 });
+// ====================================
+// ROUTE BLOQUER/DÉBLOQUER ENTREPRISE (ADMIN)
+// ====================================
+app.put('/api/admin/enterprise/:id/status', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { admin_password, action } = req.body;
+
+    // Vérifier mot de passe admin
+    if (admin_password !== process.env.ADMIN_PASSWORD) {
+      return res.status(401).json({ error: 'Mot de passe admin incorrect' });
+    }
+
+    if (action === 'block') {
+      // Mettre l'expiration à maintenant (bloquer immédiatement)
+      await pool.query(
+        'UPDATE entreprises SET plan_expiry = NOW() WHERE id = $1',
+        [id]
+      );
+      
+      console.log('🔒 Entreprise bloquée:', id);
+      
+      res.json({ success: true, message: 'Entreprise bloquée' });
+    } 
+    else if (action === 'unblock') {
+      // Réactiver pour 30 jours
+      const futureDate = new Date();
+      futureDate.setDate(futureDate.getDate() + 30);
+      
+      await pool.query(
+        'UPDATE entreprises SET plan_expiry = $1 WHERE id = $2',
+        [futureDate, id]
+      );
+      
+      console.log('🔓 Entreprise débloquée:', id);
+      
+      res.json({ success: true, message: 'Entreprise débloquée pour 30j' });
+    } 
+    else {
+      res.status(400).json({ error: 'Action invalide' });
+    }
+  } catch (error) {
+    console.error('Erreur update status:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
 
 // ====================================
 // CALLBACK PAIEMENT FEDAPAY
